@@ -676,7 +676,7 @@ static int unlazy_walk(struct nameidata *nd)
 		goto out1;
 	if (!nd->root.mnt) {
 		/* Restart from path_init() if nd->root was cleared. */
-		if (nd->flags & LOOKUP_BENEATH)
+		if (nd->flags & (LOOKUP_BENEATH | LOOKUP_IN_ROOT))
 			goto out;
 	} else if (!(nd->flags & LOOKUP_ROOT)) {
 		if (unlikely(!legitimize_path(nd, &nd->root, nd->root_seq)))
@@ -809,9 +809,17 @@ static int complete_walk(struct nameidata *nd)
 	return status;
 }
 
-static void set_root(struct nameidata *nd)
+static int set_root(struct nameidata *nd)
 {
 	struct fs_struct *fs = current->fs;
+
+	/*
+	 * Jumping to the real root as part of LOOKUP_IN_ROOT is a BUG in namei,
+	 * but we still have to ensure it doesn't happen because it will cause a
+	 * breakout from the dirfd.
+	 */
+	if (WARN_ON(nd->flags & LOOKUP_IN_ROOT))
+		return -ENOTRECOVERABLE;
 
 	if (nd->flags & LOOKUP_RCU) {
 		unsigned seq;
@@ -824,6 +832,7 @@ static void set_root(struct nameidata *nd)
 	} else {
 		get_fs_root(fs, &nd->root);
 	}
+	return 0;
 }
 
 static void path_put_conditional(struct path *path, struct nameidata *nd)
@@ -853,6 +862,11 @@ static int nd_jump_root(struct nameidata *nd)
 		/* Absolute path arguments to path_init() are allowed. */
 		if (nd->path.mnt != NULL && nd->path.mnt != nd->root.mnt)
 			return -EXDEV;
+	}
+	if (!nd->root.mnt) {
+		int error = set_root(nd);
+		if (error)
+			return error;
 	}
 	if (nd->flags & LOOKUP_RCU) {
 		struct dentry *d;
@@ -1100,15 +1114,13 @@ const char *get_link(struct nameidata *nd)
 			if (unlikely(nd->flags & LOOKUP_NO_MAGICLINKS))
 				return ERR_PTR(-ELOOP);
 			/* Not currently safe. */
-			if (unlikely(nd->flags & LOOKUP_BENEATH))
+			if (unlikely(nd->flags & (LOOKUP_BENEATH | LOOKUP_IN_ROOT)))
 				return ERR_PTR(-EXDEV);
 		}
 		if (IS_ERR_OR_NULL(res))
 			return res;
 	}
 	if (*res == '/') {
-		if (!nd->root.mnt)
-			set_root(nd);
 		error = nd_jump_root(nd);
 		if (unlikely(error))
 			return ERR_PTR(error);
@@ -1744,15 +1756,20 @@ static inline int may_lookup(struct nameidata *nd)
 static inline int handle_dots(struct nameidata *nd, int type)
 {
 	if (type == LAST_DOTDOT) {
+		int error = 0;
+
 		/*
 		 * LOOKUP_BENEATH resolving ".." is not currently safe -- races
 		 * can cause our parent to have moved outside of the root and
 		 * us to skip over it.
 		 */
-		if (unlikely(nd->flags & LOOKUP_BENEATH))
+		if (unlikely(nd->flags & (LOOKUP_BENEATH | LOOKUP_IN_ROOT)))
 			return -EXDEV;
-		if (!nd->root.mnt)
-			set_root(nd);
+		if (!nd->root.mnt) {
+			error = set_root(nd);
+			if (error)
+				return error;
+		}
 		if (nd->flags & LOOKUP_RCU) {
 			return follow_dotdot_rcu(nd);
 		} else
@@ -2251,9 +2268,13 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 
+	/* LOOKUP_IN_ROOT treats absolute paths as being relative-to-dirfd. */
+	if (flags & LOOKUP_IN_ROOT)
+		while (*s == '/')
+			s++;
+
 	/* Figure out the starting path and root (if needed). */
 	if (*s == '/') {
-		set_root(nd);
 		error = nd_jump_root(nd);
 		if (unlikely(error))
 			return ERR_PTR(error);
@@ -2298,7 +2319,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		fdput(f);
 	}
 	/* For scoped-lookups we need to set the root to the dirfd as well. */
-	if (flags & LOOKUP_BENEATH) {
+	if (flags & (LOOKUP_BENEATH | LOOKUP_IN_ROOT)) {
 		nd->root = nd->path;
 		if (flags & LOOKUP_RCU)
 			nd->root_seq = nd->seq;
