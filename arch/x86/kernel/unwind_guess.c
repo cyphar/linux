@@ -1,5 +1,6 @@
 #include <linux/sched.h>
 #include <linux/ftrace.h>
+#include <linux/kprobes.h>
 #include <asm/ptrace.h>
 #include <asm/bitops.h>
 #include <asm/stacktrace.h>
@@ -14,8 +15,10 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 
 	addr = READ_ONCE_NOCHECK(*state->sp);
 
-	return ftrace_graph_ret_addr(state->task, &state->graph_idx,
+	addr = ftrace_graph_ret_addr(state->task, &state->graph_idx,
 				     addr, state->sp);
+	addr = kretprobe_ret_addr(state->task, addr, state->sp);
+	return addr;
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
 

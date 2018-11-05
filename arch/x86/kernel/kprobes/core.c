@@ -69,8 +69,6 @@
 DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
 DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
 
-#define stack_addr(regs) ((unsigned long *)kernel_stack_pointer(regs))
-
 #define W(row, b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, ba, bb, bc, bd, be, bf)\
 	(((b0##UL << 0x0)|(b1##UL << 0x1)|(b2##UL << 0x2)|(b3##UL << 0x3) |   \
 	  (b4##UL << 0x4)|(b5##UL << 0x5)|(b6##UL << 0x6)|(b7##UL << 0x7) |   \
@@ -566,9 +564,10 @@ static nokprobe_inline void restore_btf(void)
 
 void arch_prepare_kretprobe(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	unsigned long *sara = stack_addr(regs);
+	unsigned long *sara = (unsigned long *) kernel_stack_pointer(regs);
 
-	ri->ret_addr = (kprobe_opcode_t *) *sara;
+	ri->ret_addrp = (kprobe_opcode_t **) sara;
+	ri->ret_addr = *ri->ret_addrp;
 
 	/* Replace the return addr with trampoline addr */
 	*sara = (unsigned long) &kretprobe_trampoline;
@@ -869,7 +868,7 @@ NOKPROBE_SYMBOL(trampoline_handler);
 static void resume_execution(struct kprobe *p, struct pt_regs *regs,
 			     struct kprobe_ctlblk *kcb)
 {
-	unsigned long *tos = stack_addr(regs);
+	unsigned long *tos = (unsigned long *) kernel_stack_pointer(regs);
 	unsigned long copy_ip = (unsigned long)p->ainsn.insn;
 	unsigned long orig_ip = (unsigned long)p->addr;
 	kprobe_opcode_t *insn = p->ainsn.insn;

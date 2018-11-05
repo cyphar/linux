@@ -16,7 +16,9 @@
 #ifdef CONFIG_X86_64
 #define SAVE_REGS_STRING			\
 	/* Skip cs, ip, orig_ax. */		\
-	"	subq $24, %rsp\n"		\
+	"	subq $8, %rsp\n"		\
+	UNWIND_HINT_FUNC			\
+	"	subq $16, %rsp\n"		\
 	"	pushq %rdi\n"			\
 	"	pushq %rsi\n"			\
 	"	pushq %rdx\n"			\
@@ -53,7 +55,9 @@
 #else
 #define SAVE_REGS_STRING			\
 	/* Skip cs, ip, orig_ax and gs. */	\
-	"	subl $16, %esp\n"		\
+	"	subl $4, %esp\n"		\
+	UNWIND_HINT_FUNC			\
+	"	subl $12, %esp\n"		\
 	"	pushl %fs\n"			\
 	"	pushl %es\n"			\
 	"	pushl %ds\n"			\

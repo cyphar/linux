@@ -2371,7 +2371,8 @@ perf_callchain_kernel(struct perf_callchain_entry_ctx *entry, struct pt_regs *re
 		return;
 	}
 
-	if (perf_callchain_store(entry, regs->ip))
+	addr = kretprobe_ret_addr(current, regs->ip, (unsigned long *) kernel_stack_pointer(regs) - 1);
+	if (perf_callchain_store(entry, addr))
 		return;
 
 	for (unwind_start(&state, current, regs, NULL); !unwind_done(&state);

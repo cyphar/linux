@@ -172,6 +172,7 @@ struct kretprobe_instance {
 	struct hlist_node hlist;
 	struct kretprobe *rp;
 	kprobe_opcode_t *ret_addr;
+	kprobe_opcode_t **ret_addrp;
 	struct task_struct *task;
 	char data[0];
 };
@@ -203,6 +204,7 @@ static inline int kprobes_built_in(void)
 extern void arch_prepare_kretprobe(struct kretprobe_instance *ri,
 				   struct pt_regs *regs);
 extern int arch_trampoline_kprobe(struct kprobe *p);
+extern void kretprobe_trampoline(void);
 #else /* CONFIG_KRETPROBES */
 static inline void arch_prepare_kretprobe(struct kretprobe *rp,
 					struct pt_regs *regs)
@@ -211,6 +213,9 @@ static inline void arch_prepare_kretprobe(struct kretprobe *rp,
 static inline int arch_trampoline_kprobe(struct kprobe *p)
 {
 	return 0;
+}
+static inline void kretprobe_trampoline(void)
+{
 }
 #endif /* CONFIG_KRETPROBES */
 
@@ -341,7 +346,7 @@ struct kprobe *get_kprobe(void *addr);
 void kretprobe_hash_lock(struct task_struct *tsk,
 			 struct hlist_head **head, unsigned long *flags);
 void kretprobe_hash_unlock(struct task_struct *tsk, unsigned long *flags);
-struct hlist_head * kretprobe_inst_table_head(struct task_struct *tsk);
+struct hlist_head *kretprobe_inst_table_head(struct task_struct *tsk);
 
 /* kprobe_running() will just return the current_kprobe on this CPU */
 static inline struct kprobe *kprobe_running(void)
@@ -370,6 +375,9 @@ int register_kretprobe(struct kretprobe *rp);
 void unregister_kretprobe(struct kretprobe *rp);
 int register_kretprobes(struct kretprobe **rps, int num);
 void unregister_kretprobes(struct kretprobe **rps, int num);
+
+unsigned long kretprobe_ret_addr(struct task_struct *tsk, unsigned long ret,
+				 unsigned long *retp);
 
 void kprobe_flush_task(struct task_struct *tk);
 void recycle_rp_inst(struct kretprobe_instance *ri, struct hlist_head *head);
@@ -424,6 +432,11 @@ static inline void unregister_kretprobe(struct kretprobe *rp)
 }
 static inline void unregister_kretprobes(struct kretprobe **rps, int num)
 {
+}
+unsigned long kretprobe_ret_addr(struct task_struct *task, unsigned long ret,
+				 unsigned long *retp)
+{
+	return ret;
 }
 static inline void kprobe_flush_task(struct task_struct *tk)
 {

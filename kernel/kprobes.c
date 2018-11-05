@@ -83,6 +83,11 @@ static raw_spinlock_t *kretprobe_table_lock_ptr(unsigned long hash)
 	return &(kretprobe_table_locks[hash].lock);
 }
 
+struct hlist_head *kretprobe_inst_table_head(struct task_struct *tsk)
+{
+	return &kretprobe_inst_table[hash_ptr(tsk, KPROBE_HASH_BITS)];
+}
+
 /* Blacklist -- list of struct kprobe_blacklist_entry */
 static LIST_HEAD(kprobe_blacklist);
 
@@ -1206,6 +1211,15 @@ __releases(hlist_lock)
 }
 NOKPROBE_SYMBOL(kretprobe_table_unlock);
 
+static bool kretprobe_hash_is_locked(struct task_struct *tsk)
+{
+	unsigned long hash = hash_ptr(tsk, KPROBE_HASH_BITS);
+	raw_spinlock_t *hlist_lock = kretprobe_table_lock_ptr(hash);
+
+	return raw_spin_is_locked(hlist_lock);
+}
+NOKPROBE_SYMBOL(kretprobe_hash_is_locked);
+
 /*
  * This function is called from finish_task_switch when task tk becomes dead,
  * so that we can recycle any function-return probe instances associated
@@ -1800,6 +1814,14 @@ unsigned long __weak arch_deref_entry_point(void *entry)
 	return (unsigned long)entry;
 }
 
+static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs);
+
+static bool kprobe_is_retprobe(struct kprobe *p)
+{
+	return p->pre_handler == pre_handler_kretprobe;
+}
+NOKPROBE_SYMBOL(kprobe_is_retprobe);
+
 #ifdef CONFIG_KRETPROBES
 /*
  * This kprobe pre_handler is registered with every kretprobe. When probe
@@ -1842,6 +1864,7 @@ static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs)
 		}
 
 		arch_prepare_kretprobe(ri, regs);
+		pr_info("arch_prepare_kretprobe: regs->sp=%px regs->bp=%px\n", regs->sp, regs->bp);
 
 		/* XXX(hch): why is there no hlist_move_head? */
 		INIT_HLIST_NODE(&ri->hlist);
@@ -1855,6 +1878,53 @@ static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs)
 	return 0;
 }
 NOKPROBE_SYMBOL(pre_handler_kretprobe);
+
+unsigned long kretprobe_ret_addr(struct task_struct *tsk, unsigned long ret,
+				 unsigned long *retp)
+{
+	struct kprobe *kp = kprobe_running();
+	struct kretprobe_instance *ri;
+	struct hlist_head *head;
+	unsigned long flags = 0;
+	bool need_lock = false;
+
+	if (likely(ret != (unsigned long) &kretprobe_trampoline))
+		return ret;
+
+	/* In non-kretprobe context we must always lock. */
+	if (!kp || !kprobe_is_retprobe(kp))
+		need_lock = true;
+	/*
+	 * If we are in kretprobe context we can only lock if the bucket is
+	 * different to the current task's kretprobe bucket.
+	 */
+	else if (hash_ptr(current, KPROBE_HASH_BITS) != hash_ptr(tsk, KPROBE_HASH_BITS))
+		need_lock = true;
+
+	if (need_lock)
+		kretprobe_hash_lock(tsk, &head, &flags);
+	else
+		head = kretprobe_inst_table_head(tsk);
+
+	hlist_for_each_entry(ri, head, hlist) {
+		if (ri->task != tsk)
+			continue;
+		if (ri->ret_addr == (kprobe_opcode_t *) &kretprobe_trampoline)
+			continue;
+		if (ri->ret_addrp == (kprobe_opcode_t **) retp) {
+			ret = (unsigned long) ri->ret_addr;
+			break;
+		}
+	}
+
+	/* We couldn't find a matching original return address! */
+	WARN_ON(ret == (unsigned long) &kretprobe_trampoline);
+
+	if (need_lock)
+		kretprobe_hash_unlock(tsk, &flags);
+	return ret;
+}
+NOKPROBE_SYMBOL(kretprobe_ret_addr);
 
 bool __weak arch_kprobe_on_func_entry(unsigned long offset)
 {
@@ -2005,6 +2075,12 @@ static int pre_handler_kretprobe(struct kprobe *p, struct pt_regs *regs)
 }
 NOKPROBE_SYMBOL(pre_handler_kretprobe);
 
+unsigned long kretprobe_ret_addr(struct task_struct *tsk, unsigned long ret,
+				 unsigned long *retp)
+{
+	return ret;
+}
+NOKPROBE_SYMBOL(kretprobe_ret_addr);
 #endif /* CONFIG_KRETPROBES */
 
 /* Set the kprobe gone and remove its instruction buffer. */
@@ -2241,7 +2317,7 @@ static void report_probe(struct seq_file *pi, struct kprobe *p,
 	char *kprobe_type;
 	void *addr = p->addr;
 
-	if (p->pre_handler == pre_handler_kretprobe)
+	if (kprobe_is_retprobe(p))
 		kprobe_type = "r";
 	else
 		kprobe_type = "k";

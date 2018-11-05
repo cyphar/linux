@@ -8,6 +8,7 @@
 #include <linux/sched/task_stack.h>
 #include <linux/stacktrace.h>
 #include <linux/export.h>
+#include <linux/kprobes.h>
 #include <linux/uaccess.h>
 #include <asm/stacktrace.h>
 #include <asm/unwind.h>
@@ -37,8 +38,10 @@ static void noinline __save_stack_trace(struct stack_trace *trace,
 	struct unwind_state state;
 	unsigned long addr;
 
-	if (regs)
-		save_stack_address(trace, regs->ip, nosched);
+	if (regs) {
+		addr = kretprobe_ret_addr(current, regs->ip, (unsigned long *) kernel_stack_pointer(regs) - 1);
+		save_stack_address(trace, addr, nosched);
+	}
 
 	for (unwind_start(&state, task, regs, NULL); !unwind_done(&state);
 	     unwind_next_frame(&state)) {

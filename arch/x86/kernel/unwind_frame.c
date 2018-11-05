@@ -1,4 +1,5 @@
 #include <linux/sched.h>
+#include <linux/kprobes.h>
 #include <linux/sched/task.h>
 #include <linux/sched/task_stack.h>
 #include <linux/interrupt.h>
@@ -270,6 +271,7 @@ static bool update_stack_state(struct unwind_state *state,
 		addr = READ_ONCE_TASK_STACK(state->task, *addr_p);
 		state->ip = ftrace_graph_ret_addr(state->task, &state->graph_idx,
 						  addr, addr_p);
+		state->ip = kretprobe_ret_addr(state->task, state->ip, addr_p);
 	}
 
 	/* Save the original stack pointer for unwind_dump(): */
