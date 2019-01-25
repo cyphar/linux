@@ -846,12 +846,24 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 		.lookup_flags = LOOKUP_FOLLOW,
 	};
 
-	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
+	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | AT_BENEATH |
+		       AT_XDEV | AT_NO_MAGICLINKS | AT_NO_SYMLINKS |
+		       AT_THIS_ROOT)) != 0)
 		return ERR_PTR(-EINVAL);
 	if (flags & AT_SYMLINK_NOFOLLOW)
 		open_exec_flags.lookup_flags &= ~LOOKUP_FOLLOW;
 	if (flags & AT_EMPTY_PATH)
 		open_exec_flags.lookup_flags |= LOOKUP_EMPTY;
+	if (flags & AT_BENEATH)
+		open_exec_flags.lookup_flags |= LOOKUP_BENEATH;
+	if (flags & AT_XDEV)
+		open_exec_flags.lookup_flags |= LOOKUP_XDEV;
+	if (flags & AT_NO_MAGICLINKS)
+		open_exec_flags.lookup_flags |= LOOKUP_NO_MAGICLINKS;
+	if (flags & AT_NO_SYMLINKS)
+		open_exec_flags.lookup_flags |= LOOKUP_NO_SYMLINKS;
+	if (flags & AT_THIS_ROOT)
+		open_exec_flags.lookup_flags |= LOOKUP_IN_ROOT;
 
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
@@ -879,18 +891,18 @@ exit:
 	return ERR_PTR(err);
 }
 
-struct file *open_exec(const char *name)
+struct file *openat_exec(int dfd, const char *name, int flags)
 {
 	struct filename *filename = getname_kernel(name);
 	struct file *f = ERR_CAST(filename);
 
 	if (!IS_ERR(filename)) {
-		f = do_open_execat(AT_FDCWD, filename, 0);
+		f = do_open_execat(dfd, filename, flags);
 		putname(filename);
 	}
 	return f;
 }
-EXPORT_SYMBOL(open_exec);
+EXPORT_SYMBOL(openat_exec);
 
 int kernel_read_file(struct file *file, void **buf, loff_t *size,
 		     loff_t max_size, enum kernel_read_file_id id)
@@ -1761,6 +1773,12 @@ static int __do_execve_file(int fd, struct filename *filename,
 		goto out_unmark;
 
 	sched_exec();
+
+	bprm->flags = flags & (AT_XDEV | AT_NO_MAGICLINKS | AT_NO_SYMLINKS |
+			       AT_THIS_ROOT);
+	bprm->dfd = AT_FDCWD;
+	if (bprm->flags)
+		bprm->dfd = fd;
 
 	bprm->file = file;
 	if (!filename) {

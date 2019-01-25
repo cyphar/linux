@@ -91,5 +91,11 @@
 #define AT_STATX_FORCE_SYNC	0x2000	/* - Force the attributes to be sync'd with the server */
 #define AT_STATX_DONT_SYNC	0x4000	/* - Don't sync attributes with the server */
 
+#define AT_RESOLUTION_TYPE	0xF8000 /* Type of path-resolution scoping we are applying. */
+#define AT_BENEATH		0x08000 /* - Block "lexical" trickery like "..", symlinks, absolute paths, etc. */
+#define AT_XDEV			0x10000 /* - Block mount-point crossings (includes bind-mounts). */
+#define AT_NO_MAGICLINKS	0x20000 /* - Block procfs-style "magic" symlinks. */
+#define AT_NO_SYMLINKS		0x40000 /* - Block all symlinks (implies AT_NO_MAGICLINKS). */
+#define AT_THIS_ROOT		0x80000 /* - Scope ".." resolution to dirfd (like chroot(2)). */
 
 #endif /* _UAPI_LINUX_FCNTL_H */

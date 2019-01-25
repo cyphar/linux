@@ -209,7 +209,7 @@ static int load_misc_binary(struct linux_binprm *bprm)
 		if (!IS_ERR(interp_file))
 			deny_write_access(interp_file);
 	} else {
-		interp_file = open_exec(fmt->interpreter);
+		interp_file = openat_exec(bprm->dfd, fmt->interpreter, bprm->flags);
 	}
 	retval = PTR_ERR(interp_file);
 	if (IS_ERR(interp_file))

@@ -81,10 +81,10 @@ static int load_em86(struct linux_binprm *bprm)
 
 	/*
 	 * OK, now restart the process with the interpreter's inode.
-	 * Note that we use open_exec() as the name is now in kernel
+	 * Note that we use openat_exec() as the name is now in kernel
 	 * space, and we don't need to copy it.
 	 */
-	file = open_exec(interp);
+	file = openat_exec(binprm->dfd, interp, binprm->flags);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
