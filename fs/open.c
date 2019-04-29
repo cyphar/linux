@@ -965,7 +965,8 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 		 * If we have O_PATH in the open flag. Then we
 		 * cannot have anything other than the below set of flags
 		 */
-		flags &= O_DIRECTORY | O_NOFOLLOW | O_PATH;
+		flags &= O_DIRECTORY | O_NOFOLLOW | O_PATH | O_BENEATH |
+			 O_XDEV | O_NOSYMLINKS | O_NOMAGICLINKS | O_THISROOT;
 		acc_mode = 0;
 	}
 
@@ -994,6 +995,16 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 		lookup_flags |= LOOKUP_DIRECTORY;
 	if (!(flags & O_NOFOLLOW))
 		lookup_flags |= LOOKUP_FOLLOW;
+	if (flags & O_BENEATH)
+		lookup_flags |= LOOKUP_BENEATH;
+	if (flags & O_XDEV)
+		lookup_flags |= LOOKUP_XDEV;
+	if (flags & O_NOMAGICLINKS)
+		lookup_flags |= LOOKUP_NO_MAGICLINKS;
+	if (flags & O_NOSYMLINKS)
+		lookup_flags |= LOOKUP_NO_SYMLINKS;
+	if (flags & O_THISROOT)
+		lookup_flags |= LOOKUP_IN_ROOT;
 	op->lookup_flags = lookup_flags;
 	return 0;
 }

@@ -97,6 +97,23 @@
 #define O_NDELAY	O_NONBLOCK
 #endif
 
+/* Type of path-resolution scoping we are applying. */
+#ifndef O_BENEATH
+#define O_BENEATH	00040000000 /* - Block "lexical" trickery like "..", symlinks, absolute paths, etc. */
+#endif
+#ifndef O_XDEV
+#define O_XDEV		00100000000 /* - Block mount-point crossings (includes bind-mounts). */
+#endif
+#ifndef O_NOMAGICLINKS
+#define O_NOMAGICLINKS	00200000000 /* - Block procfs-style "magic" symlinks. */
+#endif
+#ifndef O_NOSYMLINKS
+#define O_NOSYMLINKS	01000000000 /* - Block all symlinks (implies AT_NO_MAGICLINKS). */
+#endif
+#ifndef O_THISROOT
+#define O_THISROOT	02000000000 /* - Scope ".." resolution to dirfd (like chroot(2)). */
+#endif
+
 #define F_DUPFD		0	/* dup */
 #define F_GETFD		1	/* get close_on_exec */
 #define F_SETFD		2	/* set/clear close_on_exec */
