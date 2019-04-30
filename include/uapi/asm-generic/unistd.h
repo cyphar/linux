@@ -833,8 +833,11 @@ __SYSCALL(__NR_io_uring_enter, sys_io_uring_enter)
 #define __NR_io_uring_register 427
 __SYSCALL(__NR_io_uring_register, sys_io_uring_register)
 
+#define __NR_resolveat 435
+__SYSCALL(__NR_resolveat, sys_resolveat)
+
 #undef __NR_syscalls
-#define __NR_syscalls 428
+#define __NR_syscalls 436
 
 /*
  * 32 bit systems traditionally used different

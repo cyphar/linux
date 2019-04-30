@@ -93,5 +93,15 @@
 
 #define AT_RECURSIVE		0x8000	/* Apply to the entire subtree */
 
+/* Bottom bit is reserved for RESOLVE_UPGRADE_NOEXEC. */
+#define RESOLVE_UPGRADE_NOWRITE	0x002 /* Disallow re-opening for write. */
+#define RESOLVE_UPGRADE_NOREAD	0x004 /* Disallow re-opening for read. */
+#define RESOLVE_NO_FOLLOW	0x008 /* Don't follow trailing symlinks. */
+
+#define RESOLVE_BENEATH		0x010 /* Block "lexical" trickery like "..", symlinks, absolute paths, etc. */
+#define RESOLVE_XDEV		0x020 /* Block mount-point crossings (includes bind-mounts). */
+#define RESOLVE_NO_MAGICLINKS	0x040 /* Block procfs-style "magic" symlinks. */
+#define RESOLVE_NO_SYMLINKS	0x080 /* Block all symlinks (implies AT_NO_MAGICLINKS). */
+#define RESOLVE_IN_ROOT		0x100 /* Scope ".." and "/" resolution to dirfd (like chroot(2)). */
 
 #endif /* _UAPI_LINUX_FCNTL_H */

@@ -867,6 +867,9 @@ __SYSCALL(__NR_futex_time64, sys_futex)
 #define __NR_sched_rr_get_interval_time64 423
 __SYSCALL(__NR_sched_rr_get_interval_time64, sys_sched_rr_get_interval)
 
+#define __NR_resolveat 435
+__SYSCALL(__NR_resolveat, sys_sched_rr_get_interval)
+
 /*
  * Please add new compat syscalls above this comment and update
  * __NR_compat_syscalls in asm/unistd.h.
