@@ -461,6 +461,7 @@
 530	common	getegid				sys_getegid
 531	common	geteuid				sys_geteuid
 532	common	getppid				sys_getppid
+533	common	openat2				sys_openat2
 # all other architectures have common numbers for new syscall, alpha
 # is the exception.
 534	common	pidfd_send_signal		sys_pidfd_send_signal

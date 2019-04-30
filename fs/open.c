@@ -928,24 +928,32 @@ struct file *open_with_fake_path(const struct path *path, int flags,
 }
 EXPORT_SYMBOL(open_with_fake_path);
 
-static inline int build_open_flags(int flags, umode_t mode, struct open_flags *op)
+static inline int build_open_flags(struct open_how how, struct open_flags *op)
 {
 	int lookup_flags = 0;
-	int acc_mode = ACC_MODE(flags);
+	int opath_mask = 0;
+	int acc_mode = ACC_MODE(how.flags);
+
+	if (how.resolve & ~VALID_RESOLVE_FLAGS)
+		return -EINVAL;
+	if (!(how.flags & (O_PATH | O_CREAT | __O_TMPFILE)) && how.mode != 0)
+		return -EINVAL;
+	if (memchr_inv(how.reserved, 0, sizeof(how.reserved)))
+		return -EINVAL;
 
 	/*
 	 * Clear out all open flags we don't know about so that we don't report
 	 * them in fcntl(F_GETFD) or similar interfaces.
 	 */
-	flags &= VALID_OPEN_FLAGS;
+	how.flags &= VALID_OPEN_FLAGS;
 
-	if (flags & (O_CREAT | __O_TMPFILE))
-		op->mode = (mode & S_IALLUGO) | S_IFREG;
+	if (how.flags & (O_CREAT | __O_TMPFILE))
+		op->mode = (how.mode & S_IALLUGO) | S_IFREG;
 	else
 		op->mode = 0;
 
 	/* Must never be set by userspace */
-	flags &= ~FMODE_NONOTIFY & ~O_CLOEXEC;
+	how.flags &= ~FMODE_NONOTIFY & ~O_CLOEXEC;
 
 	/*
 	 * O_SYNC is implemented as __O_SYNC|O_DSYNC.  As many places only
@@ -953,51 +961,70 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 	 * always set instead of having to deal with possibly weird behaviour
 	 * for malicious applications setting only __O_SYNC.
 	 */
-	if (flags & __O_SYNC)
-		flags |= O_DSYNC;
+	if (how.flags & __O_SYNC)
+		how.flags |= O_DSYNC;
 
-	if (flags & __O_TMPFILE) {
-		if ((flags & O_TMPFILE_MASK) != O_TMPFILE)
+	if (how.flags & __O_TMPFILE) {
+		if ((how.flags & O_TMPFILE_MASK) != O_TMPFILE)
 			return -EINVAL;
 		if (!(acc_mode & MAY_WRITE))
 			return -EINVAL;
-	} else if (flags & O_PATH) {
+	} else if (how.flags & O_PATH) {
 		/*
 		 * If we have O_PATH in the open flag. Then we
 		 * cannot have anything other than the below set of flags
 		 */
-		flags &= O_DIRECTORY | O_NOFOLLOW | O_PATH;
+		how.flags &= O_DIRECTORY | O_NOFOLLOW | O_PATH;
 		acc_mode = 0;
+
+		/* Allow userspace to restrict the re-opening of O_PATH fds. */
+		if (how.upgrade_mask & ~VALID_UPGRADE_FLAGS)
+			return -EINVAL;
+		if (!(how.upgrade_mask & UPGRADE_NOREAD))
+			opath_mask |= FMODE_PATH_READ;
+		if (!(how.upgrade_mask & UPGRADE_NOWRITE))
+			opath_mask |= FMODE_PATH_WRITE;
 	}
 
-	op->open_flag = flags;
+	op->open_flag = how.flags;
 
 	/* O_TRUNC implies we need access checks for write permissions */
-	if (flags & O_TRUNC)
+	if (how.flags & O_TRUNC)
 		acc_mode |= MAY_WRITE;
 
 	/* Allow the LSM permission hook to distinguish append
 	   access from general write access. */
-	if (flags & O_APPEND)
+	if (how.flags & O_APPEND)
 		acc_mode |= MAY_APPEND;
 
 	op->acc_mode = acc_mode;
-	op->intent = flags & O_PATH ? 0 : LOOKUP_OPEN;
-	/* For O_PATH backwards-compatibility we default to an all-set mask. */
-	op->opath_mask = FMODE_PATH_READ | FMODE_PATH_WRITE;
+	op->intent = how.flags & O_PATH ? 0 : LOOKUP_OPEN;
+	op->opath_mask = opath_mask;
 
-	if (flags & O_CREAT) {
+	if (how.flags & O_CREAT) {
 		op->intent |= LOOKUP_CREATE;
-		if (flags & O_EXCL)
+		if (how.flags & O_EXCL)
 			op->intent |= LOOKUP_EXCL;
 	}
 
-	if (flags & O_DIRECTORY)
+	if (how.flags & O_DIRECTORY)
 		lookup_flags |= LOOKUP_DIRECTORY;
-	if (!(flags & O_NOFOLLOW))
+	if (!(how.flags & O_NOFOLLOW))
 		lookup_flags |= LOOKUP_FOLLOW;
-	if (flags & O_EMPTYPATH)
+	if (how.flags & O_EMPTYPATH)
 		lookup_flags |= LOOKUP_EMPTY;
+
+	if (how.resolve & RESOLVE_NO_XDEV)
+		lookup_flags |= LOOKUP_XDEV;
+	if (how.resolve & RESOLVE_NO_MAGICLINKS)
+		lookup_flags |= LOOKUP_NO_MAGICLINKS;
+	if (how.resolve & RESOLVE_NO_SYMLINKS)
+		lookup_flags |= LOOKUP_NO_SYMLINKS;
+	if (how.resolve & RESOLVE_BENEATH)
+		lookup_flags |= LOOKUP_BENEATH;
+	if (how.resolve & RESOLVE_IN_ROOT)
+		lookup_flags |= LOOKUP_IN_ROOT;
+
 	op->lookup_flags = lookup_flags;
 	return 0;
 }
@@ -1016,8 +1043,14 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
 struct file *file_open_name(struct filename *name, int flags, umode_t mode)
 {
 	struct open_flags op;
-	int err = build_open_flags(flags, mode, &op);
-	return err ? ERR_PTR(err) : do_filp_open(AT_FDCWD, name, &op);
+	struct open_how how = {
+		.flags = flags,
+		.mode = OPENHOW_MODE(flags, mode),
+	};
+	int err = build_open_flags(how, &op);
+	if (err)
+		return ERR_PTR(err);
+	return do_filp_open(AT_FDCWD, name, &op);
 }
 
 /**
@@ -1048,17 +1081,22 @@ struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 			    const char *filename, int flags, umode_t mode)
 {
 	struct open_flags op;
-	int err = build_open_flags(flags, mode, &op);
+	struct open_how how = {
+		.flags = flags,
+		.mode = OPENHOW_MODE(flags, mode),
+	};
+	int err = build_open_flags(how, &op);
 	if (err)
 		return ERR_PTR(err);
 	return do_file_open_root(dentry, mnt, filename, &op);
 }
 EXPORT_SYMBOL(file_open_root);
 
-long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
+long do_sys_open(int dfd, const char __user *filename,
+		 struct open_how *how)
 {
 	struct open_flags op;
-	int fd = build_open_flags(flags, mode, &op);
+	int fd = build_open_flags(*how, &op);
 	int empty = 0;
 	struct filename *tmp;
 
@@ -1071,7 +1109,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	if (!empty)
 		op.open_flag &= ~O_EMPTYPATH;
 
-	fd = get_unused_fd_flags(flags);
+	fd = get_unused_fd_flags(how->flags);
 	if (fd >= 0) {
 		struct file *f = do_filp_open(dfd, tmp, &op);
 		if (IS_ERR(f)) {
@@ -1088,19 +1126,35 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 
 SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
 {
-	if (force_o_largefile())
-		flags |= O_LARGEFILE;
-
-	return do_sys_open(AT_FDCWD, filename, flags, mode);
+	return ksys_open(filename, flags, mode);
 }
 
 SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
 		umode_t, mode)
 {
-	if (force_o_largefile())
-		flags |= O_LARGEFILE;
+	struct open_how how = {
+		.flags = flags,
+		.mode = OPENHOW_MODE(flags, mode),
+	};
 
-	return do_sys_open(dfd, filename, flags, mode);
+	if (force_o_largefile())
+		how.flags |= O_LARGEFILE;
+
+	return do_sys_open(dfd, filename, &how);
+}
+
+SYSCALL_DEFINE3(openat2, int, dfd, const char __user *, filename,
+		const struct open_how __user *, how)
+{
+	struct open_how tmp;
+
+	if (copy_from_user(&tmp, how, sizeof(tmp)))
+		return -EFAULT;
+
+	if (force_o_largefile())
+		tmp.flags |= O_LARGEFILE;
+
+	return do_sys_open(dfd, filename, &tmp);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1110,7 +1164,11 @@ SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
  */
 COMPAT_SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
 {
-	return do_sys_open(AT_FDCWD, filename, flags, mode);
+	struct open_how how = {
+		.flags = flags,
+		.mode = OPENHOW_MODE(flags, mode),
+	};
+	return do_sys_open(AT_FDCWD, filename, &how);
 }
 
 /*
@@ -1119,7 +1177,11 @@ COMPAT_SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t,
  */
 COMPAT_SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags, umode_t, mode)
 {
-	return do_sys_open(dfd, filename, flags, mode);
+	struct open_how how = {
+		.flags = flags,
+		.mode = OPENHOW_MODE(flags, mode),
+	};
+	return do_sys_open(dfd, filename, &how);
 }
 #endif
 
