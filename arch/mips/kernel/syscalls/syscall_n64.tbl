@@ -338,3 +338,4 @@
 327	n64	rseq				sys_rseq
 328	n64	io_pgetevents			sys_io_pgetevents
 # 329 through 423 are reserved to sync up with other architectures
+428	n64	resolveat			sys_resolveat

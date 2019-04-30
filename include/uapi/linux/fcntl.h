@@ -94,4 +94,16 @@
 #define AT_RECURSIVE		0x8000	/* Apply to the entire subtree */
 
 
+/* Bottom 3 bits of RESOLVE_* are reserved for future ACC_MODE extensions. */
+#define RESOLVE_NOFOLLOW	0x008 /* Don't follow trailing symlinks. */
+
+#define RESOLVE_RESOLUTION_TYPE	0x1F0 /* Type of path-resolution scoping we are applying. */
+#define RESOLVE_BENEATH		0x010 /* - Block "lexical" trickery like "..", symlinks, absolute paths, etc. */
+#define RESOLVE_XDEV		0x020 /* - Block mount-point crossings (includes bind-mounts). */
+#define RESOLVE_NO_MAGICLINKS	0x040 /* - Block procfs-style "magic" symlinks. */
+#define RESOLVE_NO_SYMLINKS	0x080 /* - Block all symlinks (implies AT_NO_MAGICLINKS). */
+#define RESOLVE_IN_ROOT		0x100 /* - Scope ".." resolution to dirfd (like chroot(2)). */
+
+#define VALID_RESOLVE_FLAGS	(RESOLVE_NOFOLLOW | RESOLVE_RESOLUTION_TYPE)
+
 #endif /* _UAPI_LINUX_FCNTL_H */

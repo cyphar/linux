@@ -3656,6 +3656,50 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	return filp;
 }
 
+SYSCALL_DEFINE3(resolveat, int, dfd, const char __user *, path,
+		unsigned long, flags)
+{
+	int fd;
+	struct filename *tmp;
+	struct open_flags op = {
+		.open_flag = O_PATH | O_CLOEXEC,
+	};
+
+	if (flags & ~VALID_RESOLVE_FLAGS)
+		return -EINVAL;
+
+	if (!(flags & RESOLVE_NOFOLLOW))
+		op.lookup_flags |= LOOKUP_FOLLOW;
+	if (flags & RESOLVE_BENEATH)
+		op.lookup_flags |= LOOKUP_BENEATH;
+	if (flags & RESOLVE_XDEV)
+		op.lookup_flags |= LOOKUP_XDEV;
+	if (flags & RESOLVE_NO_MAGICLINKS)
+		op.lookup_flags |= LOOKUP_NO_MAGICLINKS;
+	if (flags & RESOLVE_NO_SYMLINKS)
+		op.lookup_flags |= LOOKUP_NO_SYMLINKS;
+	if (flags & RESOLVE_IN_ROOT)
+		op.lookup_flags |= LOOKUP_IN_ROOT;
+
+	tmp = getname(path);
+	if (IS_ERR(tmp))
+		return PTR_ERR(tmp);
+
+	fd = get_unused_fd_flags(op.open_flag);
+	if (fd >= 0) {
+		struct file *f = do_filp_open(dfd, tmp, &op);
+		if (IS_ERR(f)) {
+			put_unused_fd(fd);
+			fd = PTR_ERR(f);
+		} else {
+			fsnotify_open(f);
+			fd_install(fd, f);
+		}
+	}
+	putname(tmp);
+	return fd;
+}
+
 struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 		const char *name, const struct open_flags *op)
 {
