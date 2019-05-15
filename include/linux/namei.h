@@ -2,6 +2,7 @@
 #ifndef _LINUX_NAMEI_H
 #define _LINUX_NAMEI_H
 
+#include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/path.h>
 #include <linux/fcntl.h>
@@ -38,6 +39,9 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_JUMPED		0x1000
 #define LOOKUP_ROOT		0x2000
 #define LOOKUP_ROOT_GRABBED	0x0008
+#define LOOKUP_EMPTY		0x4000
+#define LOOKUP_DOWN		0x8000
+#define LOOKUP_MAGICLINK_JUMPED	0x10000
 
 extern int path_pts(struct path *path);
 
@@ -68,7 +72,7 @@ extern int follow_up(struct path *);
 extern struct dentry *lock_rename(struct dentry *, struct dentry *);
 extern void unlock_rename(struct dentry *, struct dentry *);
 
-extern void nd_jump_link(struct path *path);
+extern void nd_jump_link(struct path *path, umode_t mode);
 
 static inline void nd_terminate_link(void *name, size_t len, size_t maxlen)
 {
@@ -89,6 +93,32 @@ static inline bool
 retry_estale(const long error, const unsigned int flags)
 {
 	return error == -ESTALE && !(flags & LOOKUP_REVAL);
+}
+
+static inline umode_t magiclink_mode(fmode_t f_mode)
+{
+	umode_t i_mode = S_IFLNK;
+
+	/*
+	 * Always set +x (depending on the fmode type), since there currently
+	 * aren't FMODE_PATH_EXEC restrictions and there is no O_NOEXEC yet.
+	 * This might change in the future, in which case we will restrict +x.
+	 */
+	if (f_mode & FMODE_PATH)
+		i_mode |= S_IXGRP;
+	else
+		i_mode |= S_IXUSR;
+	/* Ordinary file modes (non-O_PATH). */
+	if (f_mode & FMODE_READ)
+		i_mode |= S_IRUSR;
+	if (f_mode & FMODE_WRITE)
+		i_mode |= S_IWUSR;
+	/* O_PATH pseudo-modes used for upgrade-checking purposes. */
+	if (f_mode & FMODE_PATH_READ)
+		i_mode |= S_IRGRP;
+	if (f_mode & FMODE_PATH_WRITE)
+		i_mode |= S_IWGRP;
+	return i_mode;
 }
 
 #endif /* _LINUX_NAMEI_H */

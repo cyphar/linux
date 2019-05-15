@@ -504,6 +504,7 @@ struct nameidata {
 	struct filename	*name;
 	struct nameidata *saved;
 	struct inode	*link_inode;
+	umode_t last_magiclink_mode;
 	unsigned	root_seq;
 	int		dfd;
 } __randomize_layout;
@@ -859,14 +860,15 @@ static int nd_jump_root(struct nameidata *nd)
  * Helper to directly jump to a known parsed path from ->get_link,
  * caller must have taken a reference to path beforehand.
  */
-void nd_jump_link(struct path *path)
+void nd_jump_link(struct path *path, umode_t mode)
 {
 	struct nameidata *nd = current->nameidata;
 	path_put(&nd->path);
 
 	nd->path = *path;
 	nd->inode = nd->path.dentry->d_inode;
-	nd->flags |= LOOKUP_JUMPED;
+	nd->flags |= LOOKUP_JUMPED | LOOKUP_MAGICLINK_JUMPED;
+	nd->last_magiclink_mode = mode;
 }
 
 static inline void put_link(struct nameidata *nd)
@@ -1060,6 +1062,7 @@ const char *get_link(struct nameidata *nd)
 		return ERR_PTR(error);
 
 	nd->last_type = LAST_BIND;
+	nd->flags &= ~LOOKUP_MAGICLINK_JUMPED;
 	res = READ_ONCE(inode->i_link);
 	if (!res) {
 		const char * (*get)(struct dentry *, struct inode *,
@@ -3493,16 +3496,83 @@ out:
 	return error;
 }
 
-static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
+/**
+ * may_open_magiclink - Check permissions for opening a trailing magic-link
+ * @link_mode: the magic-link's i_mode
+ * @acc_mode: ACC_MODE which the user is attempting
+ *
+ * We block magic-link re-opening if the @upgrade_mask is more strict than the
+ * @acc_mode being requested, unless the user is capable(CAP_DAC_OVERRIDE).
+ *
+ * Returns 0 if successful, -EACCES on error.
+ */
+static int may_open_magiclink(umode_t link_mode, int acc_mode)
 {
-	struct path path;
-	int error = path_lookupat(nd, flags, &path);
-	if (!error) {
-		audit_inode(nd->name, path.dentry, 0);
-		error = vfs_open(&path, file);
-		path_put(&path);
+	bool err = false;
+
+	/*
+	 * We only allow for init_userns to be able to override magic-links.
+	 * This is done to avoid cases where an unprivileged userns could take
+	 * an O_PATH of the fd, resulting in it being very unclear whether
+	 * CAP_DAC_OVERRIDE should work on the new O_PATH fd (given that it
+	 * pipes through to the underlying file).
+	 */
+	if (capable(CAP_DAC_OVERRIDE))
+		return 0;
+
+	/*
+	 * We don't obey strict POSIX acl_permission_check() semantics here,
+	 * since the different octets in the mode are used to represent types
+	 * of magic-links and are not used for permission-checks.
+	 *
+	 * Instead all we care about is whether there is a bit set for each
+	 * requested acc_mode (MAY_EXEC is always permitted, since there is no
+	 * "O_MAYEXEC" equivalent).
+	 */
+	if (acc_mode & MAY_READ)
+		err |= !(link_mode & S_IRUGO);
+	if (acc_mode & MAY_WRITE)
+		err |= !(link_mode & S_IWUGO);
+	if (!err)
+		return 0;
+
+	pr_warn_ratelimited("%s[%d]: magic-link re-open blocked (%c%c%c requested with link-mode l%c%c%c%c%c%c%c%c%c)\n",
+			    current->comm, task_pid_nr(current),
+			    acc_mode & MAY_READ ? 'r' : '-',
+			    acc_mode & MAY_WRITE ? 'w' : '-',
+			    acc_mode & MAY_EXEC ? 'x' : '-',
+			    /* usr */
+			    link_mode & S_IRUSR ? 'r' : '-',
+			    link_mode & S_IWUSR ? 'w' : '-',
+			    link_mode & S_IXUSR ? 'x' : '-',
+			    /* grp */
+			    link_mode & S_IRGRP ? 'r' : '-',
+			    link_mode & S_IWGRP ? 'w' : '-',
+			    link_mode & S_IXGRP ? 'x' : '-',
+			    /* oth */
+			    link_mode & S_IROTH ? 'r' : '-',
+			    link_mode & S_IWOTH ? 'w' : '-',
+			    link_mode & S_IXOTH ? 'x' : '-');
+	return -EACCES;
+}
+
+static int trailing_magiclink(struct nameidata *nd, int acc_mode,
+			      fmode_t *opath_mask)
+{
+	umode_t link_mode = nd->last_magiclink_mode;
+
+	/* Was the trailing_symlink() a magic-link? */
+	if (!(nd->flags & LOOKUP_MAGICLINK_JUMPED))
+		return 0;
+
+	/* Restrict the O_PATH upgrade-mask of the caller. */
+	if (opath_mask) {
+		if (!(link_mode & S_IRUGO))
+			*opath_mask &= ~FMODE_PATH_READ;
+		if (!(link_mode & S_IWUGO))
+			*opath_mask &= ~FMODE_PATH_WRITE;
 	}
-	return error;
+	return may_open_magiclink(link_mode, acc_mode);
 }
 
 static struct file *path_openat(struct nameidata *nd,
@@ -3518,13 +3588,38 @@ static struct file *path_openat(struct nameidata *nd,
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file);
 	} else if (unlikely(file->f_flags & O_PATH)) {
-		error = do_o_path(nd, flags, file);
+		/* Inlined path_lookupat() with a trailing_magiclink() check. */
+		fmode_t opath_mask = op->opath_mask;
+		const char *s = path_init(nd, flags);
+
+		while (!(error = link_path_walk(s, nd))
+			&& ((error = lookup_last(nd)) > 0)) {
+			s = trailing_symlink(nd);
+			error = trailing_magiclink(nd, op->acc_mode, &opath_mask);
+			if (error)
+				s = ERR_PTR(error);
+		}
+		if (!error)
+			error = complete_walk(nd);
+
+		if (!error && nd->flags & LOOKUP_DIRECTORY)
+			if (!d_can_lookup(nd->path.dentry))
+				error = -ENOTDIR;
+		if (!error) {
+			audit_inode(nd->name, nd->path.dentry, 0);
+			error = vfs_open(&nd->path, file);
+			file->f_mode |= opath_mask;
+		}
+		terminate_walk(nd);
 	} else {
 		const char *s = path_init(nd, flags);
 		while (!(error = link_path_walk(s, nd)) &&
 			(error = do_last(nd, file, op)) > 0) {
 			nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
 			s = trailing_symlink(nd);
+			error = trailing_magiclink(nd, op->acc_mode, NULL);
+			if (error)
+				s = ERR_PTR(error);
 		}
 		terminate_walk(nd);
 	}
