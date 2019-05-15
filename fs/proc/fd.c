@@ -104,11 +104,17 @@ static void tid_fd_update_inode(struct task_struct *task, struct inode *inode,
 	task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
 
 	if (S_ISLNK(inode->i_mode)) {
-		unsigned i_mode = S_IFLNK;
-		if (f_mode & FMODE_READ)
-			i_mode |= S_IRUSR | S_IXUSR;
-		if (f_mode & FMODE_WRITE)
-			i_mode |= S_IWUSR | S_IXUSR;
+		unsigned i_mode = S_IFLNK | S_IXUGO;
+		/*
+		 * Construct the mode bits based on the open-mode. Note that
+		 * giving o+rwx permissions here is not a problem since all
+		 * /proc/self/fd magic-link resolution is gated with
+		 * ptrace_may_access().
+		 */
+		if (f_mode & (FMODE_READ | FMODE_PATH_READ))
+			i_mode |= S_IRUGO;
+		if (f_mode & (FMODE_WRITE | FMODE_PATH_WRITE))
+			i_mode |= S_IWUGO;
 		inode->i_mode = i_mode;
 	}
 	security_task_to_inode(task, inode);

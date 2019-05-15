@@ -506,6 +506,8 @@ struct nameidata {
 	struct inode	*link_inode;
 	unsigned	root_seq;
 	int		dfd;
+	fmode_t 	opath_mask;
+	int		acc_mode; /* op.acc_mode */
 } __randomize_layout;
 
 static void set_nameidata(struct nameidata *p, int dfd, struct filename *name)
@@ -514,7 +516,14 @@ static void set_nameidata(struct nameidata *p, int dfd, struct filename *name)
 	p->stack = p->internal;
 	p->dfd = dfd;
 	p->name = name;
-	p->total_link_count = old ? old->total_link_count : 0;
+	p->total_link_count = 0;
+	p->acc_mode = 0;
+	p->opath_mask = FMODE_PATH_READ | FMODE_PATH_WRITE;
+	if (old) {
+		p->total_link_count = old->total_link_count;
+		p->acc_mode = old->acc_mode;
+		p->opath_mask = old->opath_mask;
+	}
 	p->saved = old;
 	current->nameidata = p;
 }
@@ -1042,8 +1051,40 @@ static int may_create_in_sticky(struct dentry * const dir,
 	return 0;
 }
 
+/**
+ * may_reopen_magiclink - Check permissions for opening a trailing magic-link
+ * @opath_mask: the O_PATH mask of the magiclink
+ * @acc_mode: ACC_MODE which the user is attempting
+ *
+ * We block magic-link re-opening if the @opath_mask is more strict than the
+ * @acc_mode being requested, unless the user is capable(CAP_DAC_OVERRIDE).
+ *
+ * Returns 0 if successful, -ve on error.
+ */
+static int may_open_magiclink(fmode_t opath_mask, int acc_mode)
+{
+	/*
+	 * We only allow for init_userns to be able to override magic-links.
+	 * This is done to avoid cases where an unprivileger userns could take
+	 * an O_PATH of the fd, resulting in it being very unclear whether
+	 * CAP_DAC_OVERRIDE should work on the new O_PATH fd (given that it
+	 * pipes through to the underlying file).
+	 */
+	if (capable(CAP_DAC_OVERRIDE))
+		return 0;
+
+	if ((acc_mode & MAY_READ) &&
+	    !(opath_mask & (FMODE_READ | FMODE_PATH_READ)))
+		return -EACCES;
+	if ((acc_mode & MAY_WRITE) &&
+	    !(opath_mask & (FMODE_WRITE | FMODE_PATH_WRITE)))
+		return -EACCES;
+
+	return 0;
+}
+
 static __always_inline
-const char *get_link(struct nameidata *nd)
+const char *get_link(struct nameidata *nd, bool trailing)
 {
 	struct saved *last = nd->stack + nd->depth - 1;
 	struct dentry *dentry = last->link.dentry;
@@ -1080,6 +1121,50 @@ const char *get_link(struct nameidata *nd)
 			}
 		} else {
 			res = get(dentry, inode, &last->done);
+		}
+		/* If we just jumped it was because of a magic-link. */
+		if (unlikely(nd->flags & LOOKUP_JUMPED)) {
+			/*
+			 * For trailing_symlink we check whether the symlink's
+			 * mode allows us to do what we want through acc_mode.
+			 * In addition, we need to stash away what the link
+			 * mode is in case we are about to O_PATH this
+			 * magic-link.
+			 *
+			 * This is only done for magic-links, as a security
+			 * measure to prevent users from being able to re-open
+			 * files with additional permissions or similar tricks
+			 * through procfs. This is not strictly POSIX-friendly,
+			 * but technically neither are magic-links.
+			 */
+			if (trailing) {
+				fmode_t opath_mask = 0;
+				int mode = inode->i_mode;
+
+				/*
+				 * Bare-bones acl_permission_check shift so
+				 * that opath_mask can be adjusted using creds.
+				 */
+				if (uid_eq(current_fsuid(), inode->i_uid))
+					mode >>= 6;
+				else if (in_group_p(inode->i_gid))
+					mode >>= 3;
+
+				/* Figure out the O_PATH mask. */
+				if (mode & MAY_READ)
+					opath_mask |= FMODE_PATH_READ;
+				if (mode & MAY_WRITE)
+					opath_mask |= FMODE_PATH_WRITE;
+
+				/*
+				 * Is the new opath_mask more restrictive than
+				 * the acc_mode being requested?
+				 */
+				error = may_open_magiclink(opath_mask, nd->acc_mode);
+				if (error)
+					return ERR_PTR(error);
+				nd->opath_mask &= opath_mask;
+			}
 		}
 		if (IS_ERR_OR_NULL(res))
 			return res;
@@ -2142,7 +2227,7 @@ OK:
 			return err;
 
 		if (err) {
-			const char *s = get_link(nd);
+			const char *s = get_link(nd, false);
 
 			if (IS_ERR(s))
 				return PTR_ERR(s);
@@ -2258,7 +2343,7 @@ static const char *trailing_symlink(struct nameidata *nd)
 		return ERR_PTR(error);
 	nd->flags |= LOOKUP_PARENT;
 	nd->stack[0].name = NULL;
-	s = get_link(nd);
+	s = get_link(nd, true);
 	return s ? s : "";
 }
 
@@ -3508,6 +3593,7 @@ static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
 	if (!error) {
 		audit_inode(nd->name, path.dentry, 0);
 		error = vfs_open(&path, file);
+		file->f_mode |= nd->opath_mask;
 		path_put(&path);
 	}
 	return error;
@@ -3518,6 +3604,9 @@ static struct file *path_openat(struct nameidata *nd,
 {
 	struct file *file;
 	int error;
+
+	nd->acc_mode = op->acc_mode;
+	nd->opath_mask = op->opath_mask;
 
 	file = alloc_empty_file(op->open_flag, current_cred());
 	if (IS_ERR(file))
@@ -3537,6 +3626,26 @@ static struct file *path_openat(struct nameidata *nd,
 		terminate_walk(nd);
 	}
 	if (likely(!error)) {
+		/*
+		 * In order to allow for re-opening of a read-only fds as
+		 * read-write (something that some userspace tools depend on,
+		 * including some kernel selftests), we give additional
+		 * permissions based on what permissions are available at
+		 * open-time. This must be scoped to opath_mask to avoid
+		 * obvious O_PATH attacks.
+		 */
+		if (likely(!(file->f_mode & FMODE_PATH))) {
+			fmode_t add_perms = 0;
+
+			if (!(nd->acc_mode & MAY_READ) &&
+			    !inode_permission(file->f_inode, MAY_READ))
+				add_perms |= FMODE_PATH_READ;
+			if (!(nd->acc_mode & MAY_WRITE) &&
+			    !inode_permission(file->f_inode, MAY_WRITE))
+				add_perms |= FMODE_PATH_WRITE;
+
+			file->f_mode |= add_perms & nd->opath_mask;
+		}
 		if (likely(file->f_mode & FMODE_OPENED))
 			return file;
 		WARN_ON(1);
