@@ -83,7 +83,7 @@ extern int follow_up(struct path *);
 extern struct dentry *lock_rename(struct dentry *, struct dentry *);
 extern void unlock_rename(struct dentry *, struct dentry *);
 
-extern int __must_check nd_jump_link(const struct path *path);
+extern int __must_check nd_jump_link(const struct path *path, umode_t mode);
 
 static inline void nd_terminate_link(void *name, size_t len, size_t maxlen)
 {
@@ -104,6 +104,32 @@ static inline bool
 retry_estale(const long error, const unsigned int flags)
 {
 	return error == -ESTALE && !(flags & LOOKUP_REVAL);
+}
+
+static inline umode_t magiclink_mode(fmode_t f_mode)
+{
+	umode_t i_mode = S_IFLNK;
+
+	/*
+	 * Always set +x (depending on the fmode type), since there currently
+	 * aren't FMODE_PATH_EXEC restrictions and there is no O_NOEXEC yet.
+	 * This might change in the future, in which case we will restrict +x.
+	 */
+	if (f_mode & FMODE_PATH)
+		i_mode |= S_IXGRP;
+	else
+		i_mode |= S_IXUSR;
+	/* Ordinary file modes (non-O_PATH). */
+	if (f_mode & FMODE_READ)
+		i_mode |= S_IRUSR;
+	if (f_mode & FMODE_WRITE)
+		i_mode |= S_IWUSR;
+	/* O_PATH pseudo-modes used for upgrade-checking purposes. */
+	if (f_mode & FMODE_PATH_READ)
+		i_mode |= S_IRGRP;
+	if (f_mode & FMODE_PATH_WRITE)
+		i_mode |= S_IWGRP;
+	return i_mode;
 }
 
 #endif /* _LINUX_NAMEI_H */
