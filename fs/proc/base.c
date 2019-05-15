@@ -182,9 +182,11 @@ static int get_task_root(struct task_struct *task, struct path *root)
 	return result;
 }
 
-static int proc_cwd_link(struct dentry *dentry, struct path *path)
+static int proc_cwd_link(struct dentry *dentry, struct path *path,
+			 umode_t *mode)
 {
-	struct task_struct *task = get_proc_task(d_inode(dentry));
+	struct inode *inode = d_inode(dentry);
+	struct task_struct *task = get_proc_task(inode);
 	int result = -ENOENT;
 
 	if (task) {
@@ -196,18 +198,24 @@ static int proc_cwd_link(struct dentry *dentry, struct path *path)
 		task_unlock(task);
 		put_task_struct(task);
 	}
+	if (mode)
+		*mode = inode->i_mode;
 	return result;
 }
 
-static int proc_root_link(struct dentry *dentry, struct path *path)
+static int proc_root_link(struct dentry *dentry, struct path *path,
+			  umode_t *mode)
 {
-	struct task_struct *task = get_proc_task(d_inode(dentry));
+	struct inode *inode = d_inode(dentry);
+	struct task_struct *task = get_proc_task(inode);
 	int result = -ENOENT;
 
 	if (task) {
 		result = get_task_root(task, path);
 		put_task_struct(task);
 	}
+	if (mode)
+		*mode = inode->i_mode;
 	return result;
 }
 
@@ -1719,23 +1727,29 @@ static const struct file_operations proc_pid_set_comm_operations = {
 	.release	= single_release,
 };
 
-static int proc_exe_link(struct dentry *dentry, struct path *exe_path)
+static int proc_exe_link(struct dentry *dentry, struct path *exe_path,
+			 umode_t *mode)
 {
+	int error = -ENOENT;
+	struct inode *inode = d_inode(dentry);
 	struct task_struct *task;
 	struct file *exe_file;
 
-	task = get_proc_task(d_inode(dentry));
+	task = get_proc_task(inode);
 	if (!task)
-		return -ENOENT;
+		return error;
 	exe_file = get_task_exe_file(task);
 	put_task_struct(task);
+
 	if (exe_file) {
 		*exe_path = exe_file->f_path;
 		path_get(&exe_file->f_path);
 		fput(exe_file);
-		return 0;
-	} else
-		return -ENOENT;
+		error = 0;
+	}
+	if (mode)
+		*mode = inode->i_mode;
+	return error;
 }
 
 static const char *proc_pid_get_link(struct dentry *dentry,
@@ -1743,6 +1757,7 @@ static const char *proc_pid_get_link(struct dentry *dentry,
 				     struct delayed_call *done)
 {
 	struct path path;
+	umode_t mode = 0;
 	int error = -EACCES;
 
 	if (!dentry)
@@ -1752,11 +1767,11 @@ static const char *proc_pid_get_link(struct dentry *dentry,
 	if (!proc_fd_access_allowed(inode))
 		goto out;
 
-	error = PROC_I(inode)->op.proc_get_link(dentry, &path);
+	error = PROC_I(inode)->op.proc_get_link(dentry, &path, &mode);
 	if (error)
 		goto out;
 
-	error = nd_jump_link(&path);
+	error = nd_jump_link(&path, mode);
 out:
 	return ERR_PTR(error);
 }
@@ -1795,7 +1810,7 @@ static int proc_pid_readlink(struct dentry * dentry, char __user * buffer, int b
 	if (!proc_fd_access_allowed(inode))
 		goto out;
 
-	error = PROC_I(inode)->op.proc_get_link(dentry, &path);
+	error = PROC_I(inode)->op.proc_get_link(dentry, &path, NULL);
 	if (error)
 		goto out;
 
@@ -2189,16 +2204,18 @@ static const struct dentry_operations tid_map_files_dentry_operations = {
 	.d_delete	= pid_delete_dentry,
 };
 
-static int map_files_get_link(struct dentry *dentry, struct path *path)
+static int map_files_get_link(struct dentry *dentry, struct path *path,
+			      umode_t *mode)
 {
 	unsigned long vm_start, vm_end;
 	struct vm_area_struct *vma;
 	struct task_struct *task;
 	struct mm_struct *mm;
+	struct inode *inode = d_inode(dentry);
 	int rc;
 
 	rc = -ENOENT;
-	task = get_proc_task(d_inode(dentry));
+	task = get_proc_task(inode);
 	if (!task)
 		goto out;
 
@@ -2218,6 +2235,8 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
 	rc = -ENOENT;
 	vma = find_exact_vma(mm, vm_start, vm_end);
 	if (vma && vma->vm_file) {
+		if (mode)
+			*mode = inode->i_mode;
 		*path = vma->vm_file->f_path;
 		path_get(path);
 		rc = 0;
@@ -2654,7 +2673,7 @@ static struct dentry *proc_pident_instantiate(struct dentry *dentry,
 	return d_splice_alias(inode, dentry);
 }
 
-static struct dentry *proc_pident_lookup(struct inode *dir, 
+static struct dentry *proc_pident_lookup(struct inode *dir,
 					 struct dentry *dentry,
 					 const struct pid_entry *p,
 					 const struct pid_entry *end)
@@ -2867,7 +2886,7 @@ static const struct pid_entry attr_dir_stuff[] = {
 
 static int proc_attr_dir_readdir(struct file *file, struct dir_context *ctx)
 {
-	return proc_pident_readdir(file, ctx, 
+	return proc_pident_readdir(file, ctx,
 				   attr_dir_stuff, ARRAY_SIZE(attr_dir_stuff));
 }
 

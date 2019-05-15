@@ -124,14 +124,8 @@ static void tid_fd_update_inode(struct task_struct *task, struct inode *inode,
 {
 	task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
 
-	if (S_ISLNK(inode->i_mode)) {
-		unsigned i_mode = S_IFLNK;
-		if (f_mode & FMODE_READ)
-			i_mode |= S_IRUSR | S_IXUSR;
-		if (f_mode & FMODE_WRITE)
-			i_mode |= S_IWUSR | S_IXUSR;
-		inode->i_mode = i_mode;
-	}
+	if (S_ISLNK(inode->i_mode))
+		inode->i_mode = magiclink_mode(f_mode);
 	security_task_to_inode(task, inode);
 }
 
@@ -165,7 +159,8 @@ static const struct dentry_operations tid_fd_dentry_operations = {
 	.d_delete	= pid_delete_dentry,
 };
 
-static int proc_fd_link(struct dentry *dentry, struct path *path)
+static int proc_fd_link(struct dentry *dentry, struct path *path,
+			umode_t *mode)
 {
 	struct task_struct *task;
 	int ret = -ENOENT;
@@ -177,6 +172,13 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 
 		fd_file = fget_task(task, fd);
 		if (fd_file) {
+			/*
+			 * Re-compute the mode here with file_lock held. The
+			 * inode's i_mode might be incorrect for the later
+			 * check in may_open_magiclink().
+			 */
+			if (mode)
+				*mode = magiclink_mode(fd_file->f_mode);
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
 			ret = 0;

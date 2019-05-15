@@ -53,8 +53,8 @@
  * The new code replaces the old recursive symlink resolution with
  * an iterative one (in case of non-nested symlink chains).  It does
  * this with calls to <fs>_follow_link().
- * As a side effect, dir_namei(), _namei() and follow_link() are now 
- * replaced with a single function lookup_dentry() that can handle all 
+ * As a side effect, dir_namei(), _namei() and follow_link() are now
+ * replaced with a single function lookup_dentry() that can handle all
  * the special cases of the former code.
  *
  * With the new dcache, the pathname is stored at each inode, at least as
@@ -579,6 +579,7 @@ struct nameidata {
 	} *stack, internal[EMBEDDED_LEVELS];
 	struct filename	*name;
 	struct nameidata *saved;
+	umode_t		last_magiclink_mode;
 	unsigned	root_seq;
 	int		dfd;
 	kuid_t		dir_uid;
@@ -588,6 +589,7 @@ struct nameidata {
 #define ND_ROOT_PRESET 1
 #define ND_ROOT_GRABBED 2
 #define ND_JUMPED 4
+#define ND_MAGICLINK_JUMPED 8
 
 static void __set_nameidata(struct nameidata *p, int dfd, struct filename *name)
 {
@@ -986,7 +988,7 @@ static int nd_jump_root(struct nameidata *nd)
  * Helper to directly jump to a known parsed path from ->get_link,
  * caller must have taken a reference to path beforehand.
  */
-int nd_jump_link(const struct path *path)
+int nd_jump_link(const struct path *path, umode_t mode)
 {
 	int error = -ELOOP;
 	struct nameidata *nd = current->nameidata;
@@ -1006,7 +1008,8 @@ int nd_jump_link(const struct path *path)
 	path_put(&nd->path);
 	nd->path = *path;
 	nd->inode = nd->path.dentry->d_inode;
-	nd->state |= ND_JUMPED;
+	nd->state |= ND_JUMPED | ND_MAGICLINK_JUMPED;
+	nd->last_magiclink_mode = mode;
 	return 0;
 
 err:
@@ -2278,7 +2281,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		}
 		if (likely(type == LAST_NORM)) {
 			struct dentry *parent = nd->path.dentry;
-			nd->state &= ~ND_JUMPED;
+			nd->state &= ~(ND_JUMPED|ND_MAGICLINK_JUMPED);
 			if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
 				struct qstr this = { { .hash_len = hash_len }, .name = name };
 				err = parent->d_op->d_hash(parent, &this);
@@ -2446,7 +2449,6 @@ static inline const char *lookup_last(struct nameidata *nd)
 {
 	if (nd->last_type == LAST_NORM && nd->last.name[nd->last.len])
 		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
-
 	return walk_component(nd, WALK_TRAILING);
 }
 
@@ -2475,7 +2477,7 @@ static int path_lookupat(struct nameidata *nd, unsigned flags, struct path *path
 		;
 	if (!err && unlikely(nd->flags & LOOKUP_MOUNTPOINT)) {
 		err = handle_lookup_down(nd);
-		nd->state &= ~ND_JUMPED; // no d_weak_revalidate(), please...
+		nd->state &= ~(ND_JUMPED|ND_MAGICLINK_JUMPED); // no d_weak_revalidate(), please...
 	}
 	if (!err)
 		err = complete_walk(nd);
@@ -2699,6 +2701,7 @@ struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 {
 	struct dentry *dentry;
 	struct qstr this;
+
 	int err;
 
 	WARN_ON_ONCE(!inode_is_locked(base->d_inode));
@@ -3247,6 +3250,84 @@ static int may_o_create(struct user_namespace *mnt_userns,
 	return security_inode_create(dir->dentry->d_inode, dentry, mode);
 }
 
+/**
+ * may_open_magiclink - Check permissions for opening a trailing magic-link
+ * @link_mode: the magic-link's i_mode
+ * @acc_mode: ACC_MODE which the user is attempting
+ *
+ * We block magic-link re-opening if the @upgrade_mask is more strict than the
+ * @acc_mode being requested, unless the user is capable(CAP_DAC_OVERRIDE).
+ *
+ * Returns 0 if successful, -EACCES on error.
+ */
+static int may_open_magiclink(umode_t link_mode, int acc_mode)
+{
+	bool err = false;
+
+	/*
+	 * We only allow for init_userns to be able to override magic-links.
+	 * This is done to avoid cases where an unprivileged userns could take
+	 * an O_PATH of the fd, resulting in it being very unclear whether
+	 * CAP_DAC_OVERRIDE should work on the new O_PATH fd (given that it
+	 * pipes through to the underlying file).
+	 */
+	if (capable(CAP_DAC_OVERRIDE))
+		return 0;
+
+	/*
+	 * We don't obey strict POSIX acl_permission_check() semantics here,
+	 * since the different octets in the mode are used to represent types
+	 * of magic-links and are not used for permission-checks.
+	 *
+	 * Instead all we care about is whether there is a bit set for each
+	 * requested acc_mode (MAY_EXEC is always permitted, since there is no
+	 * "O_MAYEXEC" equivalent).
+	 */
+	if (acc_mode & MAY_READ)
+		err |= !(link_mode & S_IRUGO);
+	if (acc_mode & MAY_WRITE)
+		err |= !(link_mode & S_IWUGO);
+	if (!err)
+		return 0;
+
+	pr_warn_ratelimited("%s[%d]: magic-link re-open blocked (%c%c%c requested with link-mode l%c%c%c%c%c%c%c%c%c)\n",
+			    current->comm, task_pid_nr(current),
+			    acc_mode & MAY_READ ? 'r' : '-',
+			    acc_mode & MAY_WRITE ? 'w' : '-',
+			    acc_mode & MAY_EXEC ? 'x' : '-',
+			    /* usr */
+			    link_mode & S_IRUSR ? 'r' : '-',
+			    link_mode & S_IWUSR ? 'w' : '-',
+			    link_mode & S_IXUSR ? 'x' : '-',
+			    /* grp */
+			    link_mode & S_IRGRP ? 'r' : '-',
+			    link_mode & S_IWGRP ? 'w' : '-',
+			    link_mode & S_IXGRP ? 'x' : '-',
+			    /* oth */
+			    link_mode & S_IROTH ? 'r' : '-',
+			    link_mode & S_IWOTH ? 'w' : '-',
+			    link_mode & S_IXOTH ? 'x' : '-');
+	return -EACCES;
+}
+
+static int trailing_magiclink(struct nameidata *nd, int acc_mode,
+			      fmode_t *opath_mask)
+{
+	umode_t link_mode = nd->last_magiclink_mode;
+
+	if (!(nd->state & ND_MAGICLINK_JUMPED))
+		return 0;
+
+	/* Restrict the O_PATH upgrade-mask of the caller. */
+	if (opath_mask) {
+		if (!(link_mode & S_IRUGO))
+			*opath_mask &= ~FMODE_PATH_READ;
+		if (!(link_mode & S_IWUGO))
+			*opath_mask &= ~FMODE_PATH_WRITE;
+	}
+	return may_open_magiclink(link_mode, acc_mode);
+}
+
 /*
  * Attempt to atomically look up, create and open a file from a negative
  * dentry.
@@ -3504,6 +3585,12 @@ finish_lookup:
 	res = step_into(nd, WALK_TRAILING, dentry);
 	if (unlikely(res))
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
+	if (unlikely(!IS_ERR_OR_NULL(res))) {
+		int error = trailing_magiclink(nd, op->acc_mode, NULL);
+		if (error)
+			res = ERR_PTR(error);
+		/* We don't update file->f_mode with opath_mask for regular open. */
+	}
 	return res;
 }
 
@@ -3656,16 +3743,39 @@ out:
 	return error;
 }
 
-static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
+static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file,
+		     const struct open_flags *op)
 {
-	struct path path;
-	int error = path_lookupat(nd, flags, &path);
-	if (!error) {
-		audit_inode(nd->name, path.dentry, 0);
-		error = vfs_open(&path, file);
-		path_put(&path);
+	/* Inline path_lookupat() with trailing_magiclink() after lookup_last(). */
+	fmode_t opath_mask = op->opath_mask;
+	const char *s = path_init(nd, flags);
+	int err;
+
+	if (unlikely(flags & LOOKUP_DOWN) && !IS_ERR(s)) {
+		err = handle_lookup_down(nd);
+		if (unlikely(err < 0))
+			s = ERR_PTR(err);
 	}
-	return error;
+
+	while (!(err = link_path_walk(s, nd)) &&
+	       (s = lookup_last(nd)) != NULL) {
+		err = trailing_magiclink(nd, op->acc_mode, &opath_mask);
+		if (err)
+			s = ERR_PTR(err);
+	}
+	if (!err)
+		err = complete_walk(nd);
+
+	if (!err && nd->flags & LOOKUP_DIRECTORY)
+		if (!d_can_lookup(nd->path.dentry))
+			err = -ENOTDIR;
+	if (!err) {
+		audit_inode(nd->name, nd->path.dentry, 0);
+		err = vfs_open(&nd->path, file);
+		file->f_mode |= opath_mask;
+	}
+	terminate_walk(nd);
+	return err;
 }
 
 static struct file *path_openat(struct nameidata *nd,
@@ -3681,7 +3791,7 @@ static struct file *path_openat(struct nameidata *nd,
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file);
 	} else if (unlikely(file->f_flags & O_PATH)) {
-		error = do_o_path(nd, flags, file);
+		error = do_o_path(nd, flags, file, op);
 	} else {
 		const char *s = path_init(nd, flags);
 		while (!(error = link_path_walk(s, nd)) &&

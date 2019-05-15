@@ -184,8 +184,14 @@ typedef int (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 /* File supports async nowait buffered writes */
 #define FMODE_BUF_WASYNC	((__force fmode_t)0x80000000)
 
+/* File is an O_PATH descriptor which can be upgraded to (read, write). */
+#define FMODE_PATH_READ		((__force fmode_t)0x100000000)
+#define FMODE_PATH_WRITE	((__force fmode_t)0x200000000)
+
 /* Only expose a subset of f_mode bits to userspace. */
-#define FMODE_VISIBLE_FDINFO_FLAGS	(FMODE_READ | FMODE_WRITE | FMODE_PATH)
+#define FMODE_VISIBLE_FDINFO_FLAGS					\
+	(FMODE_READ | FMODE_WRITE | FMODE_PATH | FMODE_PATH_READ |	\
+	 FMODE_PATH_WRITE)
 
 /*
  * Attribute flags.  These should be or-ed together to figure out what

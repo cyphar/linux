@@ -1167,10 +1167,13 @@ inline int build_open_flags(const struct open_how *how, struct open_flags *op)
 		if (!(acc_mode & MAY_WRITE))
 			return -EINVAL;
 	}
+
 	if (flags & O_PATH) {
 		/* O_PATH only permits certain other flags to be set. */
 		if (flags & ~O_PATH_FLAGS)
 			return -EINVAL;
+		/* For O_PATH backwards-compatibility we default to an all-set mask. */
+		op->opath_mask = FMODE_PATH_READ | FMODE_PATH_WRITE;
 		acc_mode = 0;
 	}
 
@@ -1195,7 +1198,6 @@ inline int build_open_flags(const struct open_how *how, struct open_flags *op)
 		acc_mode |= MAY_APPEND;
 
 	op->acc_mode = acc_mode;
-
 	op->intent = flags & O_PATH ? 0 : LOOKUP_OPEN;
 
 	if (flags & O_CREAT) {
@@ -1268,7 +1270,7 @@ struct file *filp_open(const char *filename, int flags, umode_t mode)
 {
 	struct filename *name = getname_kernel(filename);
 	struct file *file = ERR_CAST(name);
-	
+
 	if (!IS_ERR(name)) {
 		file = file_open_name(name, flags, mode);
 		putname(name);

@@ -2562,7 +2562,7 @@ static const char *policy_get_link(struct dentry *dentry,
 	ns = aa_get_current_ns();
 	path.mnt = mntget(aafs_mnt);
 	path.dentry = dget(ns_dir(ns));
-	error = nd_jump_link(&path);
+	error = nd_jump_link(&path, inode->i_mode);
 	aa_put_ns(ns);
 
 	return ERR_PTR(error);
