@@ -62,7 +62,7 @@ static const char *proc_ns_get_link(struct dentry *dentry,
 	if (error)
 		goto out;
 
-	error = nd_jump_link(&ns_path);
+	error = nd_jump_link(&ns_path, inode->i_mode);
 out:
 	put_task_struct(task);
 	return ERR_PTR(error);
