@@ -98,19 +98,38 @@ static bool tid_fd_mode(struct task_struct *task, unsigned fd, fmode_t *mode)
 	return !!file;
 }
 
+static umode_t fd_mode_to_umode(fmode_t f_mode)
+{
+	umode_t i_mode = S_IFLNK;
+	/*
+	 * Always set +x (depending on the fmode type), since there currently
+	 * aren't FMODE_PATH_EXEC restrictions and there is no O_NOEXEC yet.
+	 * This might change in the future, in which case we will restrict +x.
+	 */
+	if (f_mode & FMODE_PATH)
+		i_mode |= S_IXGRP;
+	else
+		i_mode |= S_IXUSR;
+	/* Ordinary file modes (non-O_PATH). */
+	if (f_mode & FMODE_READ)
+		i_mode |= S_IRUSR;
+	if (f_mode & FMODE_WRITE)
+		i_mode |= S_IWUSR;
+	/* O_PATH pseudo-modes used for upgrade-checking purposes. */
+	if (f_mode & FMODE_PATH_READ)
+		i_mode |= S_IRGRP;
+	if (f_mode & FMODE_PATH_WRITE)
+		i_mode |= S_IWGRP;
+	return i_mode;
+}
+
 static void tid_fd_update_inode(struct task_struct *task, struct inode *inode,
 				fmode_t f_mode)
 {
 	task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
 
-	if (S_ISLNK(inode->i_mode)) {
-		unsigned i_mode = S_IFLNK;
-		if (f_mode & FMODE_READ)
-			i_mode |= S_IRUSR | S_IXUSR;
-		if (f_mode & FMODE_WRITE)
-			i_mode |= S_IWUSR | S_IXUSR;
-		inode->i_mode = i_mode;
-	}
+	if (S_ISLNK(inode->i_mode))
+		inode->i_mode = fd_mode_to_umode(f_mode);
 	security_task_to_inode(task, inode);
 }
 
@@ -144,7 +163,8 @@ static const struct dentry_operations tid_fd_dentry_operations = {
 	.d_delete	= pid_delete_dentry,
 };
 
-static int proc_fd_link(struct dentry *dentry, struct path *path)
+static int proc_fd_link(struct dentry *dentry, struct path *path,
+			umode_t *mode)
 {
 	struct files_struct *files = NULL;
 	struct task_struct *task;
@@ -163,6 +183,13 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 		spin_lock(&files->file_lock);
 		fd_file = fcheck_files(files, fd);
 		if (fd_file) {
+			/*
+			 * Re-compute the mode here with file_lock held. The
+			 * inode's i_mode might be incorrect for the later
+			 * check in may_open_magiclink().
+			 */
+			if (mode)
+				*mode = fd_mode_to_umode(fd_file->f_mode);
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
 			ret = 0;
