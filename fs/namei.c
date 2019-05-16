@@ -3778,6 +3778,26 @@ static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file,
 	return err;
 }
 
+static int do_emptypath(struct nameidata *nd, const struct open_flags *op,
+			struct file *file)
+{
+	int error;
+	/* We don't support AT_FDCWD (since O_PATH is disallowed here). */
+	struct fd f = fdget_raw(nd->dfd);
+	umode_t link_mode;
+
+	if (!f.file)
+		return -EBADF;
+
+	/* Apply trailing_magiclink()-like restrictions. */
+	link_mode = magiclink_mode(f.file->f_mode);
+	error = may_open_magiclink(link_mode, op->acc_mode);
+	if (!error)
+		error = vfs_open(&f.file->f_path, file);
+	fdput(f);
+	return error;
+}
+
 static struct file *path_openat(struct nameidata *nd,
 			const struct open_flags *op, unsigned flags)
 {
@@ -3790,6 +3810,8 @@ static struct file *path_openat(struct nameidata *nd,
 
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file);
+	} else if (unlikely(file->f_flags & O_EMPTYPATH)) {
+		error = do_emptypath(nd, op, file);
 	} else if (unlikely(file->f_flags & O_PATH)) {
 		error = do_o_path(nd, flags, file, op);
 	} else {
