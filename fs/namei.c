@@ -3571,6 +3571,24 @@ static int trailing_magiclink(struct nameidata *nd, int acc_mode,
 	return may_open_magiclink(upgrade_mask, acc_mode);
 }
 
+static int do_emptypath(struct nameidata *nd, const struct open_flags *op,
+			struct file *file)
+{
+	int error;
+	/* We don't support AT_FDCWD (since O_PATH is disallowed here). */
+	struct fd f = fdget_raw(nd->dfd);
+
+	if (!f.file)
+		return -EBADF;
+
+	/* Apply trailing_magiclink()-like restrictions. */
+	error = may_open_magiclink(f.file->f_mode, op->acc_mode);
+	if (!error)
+		error = vfs_open(&f.file->f_path, file);
+	fdput(f);
+	return error;
+}
+
 static struct file *path_openat(struct nameidata *nd,
 			const struct open_flags *op, unsigned flags)
 {
@@ -3583,6 +3601,8 @@ static struct file *path_openat(struct nameidata *nd,
 
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file);
+	} else if (unlikely(file->f_flags & O_EMPTYPATH)) {
+		error = do_emptypath(nd, op, file);
 	} else if (unlikely(file->f_flags & O_PATH)) {
 		/* Inlined path_lookupat() with a trailing_magiclink() check. */
 		fmode_t opath_mask = op->opath_mask;
