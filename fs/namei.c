@@ -3605,6 +3605,31 @@ static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
 	return error;
 }
 
+static int do_o_emptypath(struct nameidata *nd, struct file *newfile)
+{
+	int error;
+	struct fd f;
+
+	/* We don't support AT_FDCWD since O_PATH cannot be set here. */
+	f = fdget_raw(nd->dfd);
+	if (!f.file)
+		return -EBADF;
+
+	/* Update opath_mask as though we went through trailing_symlink(). */
+	if (!(f.file->f_mode & (FMODE_READ | FMODE_PATH_READ)))
+		nd->opath_mask &= ~FMODE_PATH_READ;
+	if (!(f.file->f_mode & (FMODE_WRITE | FMODE_PATH_WRITE)))
+		nd->opath_mask &= ~FMODE_PATH_WRITE;
+
+	/* Obey the same restrictions as magic-links. */
+	error = may_open_magiclink(f.file->f_mode, nd->acc_mode);
+	if (!error)
+		error = vfs_open(&f.file->f_path, newfile);
+
+	fdput(f);
+	return error;
+}
+
 static struct file *path_openat(struct nameidata *nd,
 			const struct open_flags *op, unsigned flags)
 {
@@ -3620,6 +3645,8 @@ static struct file *path_openat(struct nameidata *nd,
 
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
 		error = do_tmpfile(nd, flags, op, file);
+	} else if (unlikely(file->f_flags & O_EMPTYPATH)) {
+		error = do_o_emptypath(nd, file);
 	} else if (unlikely(file->f_flags & O_PATH)) {
 		error = do_o_path(nd, flags, file);
 	} else {
