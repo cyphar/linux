@@ -17,8 +17,9 @@
 #define O_DIRECTORY	000010000 /* must be a directory */
 #define O_NOFOLLOW	000000200 /* don't follow links */
 
-#define O_PATH		020000000
-#define __O_TMPFILE	040000000
+#define O_PATH		0020000000
+#define __O_TMPFILE	0040000000
+#define O_EMPTYPATH	0100000000
 
 #define F_GETLK64	8
 #define F_SETLK64	9
