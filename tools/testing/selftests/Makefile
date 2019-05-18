@@ -37,6 +37,7 @@ TARGETS += powerpc
 TARGETS += proc
 TARGETS += pstore
 TARGETS += ptrace
+TARGETS += resolveat
 TARGETS += rseq
 TARGETS += rtc
 TARGETS += seccomp
