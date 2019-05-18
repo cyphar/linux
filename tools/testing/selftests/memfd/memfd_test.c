@@ -925,7 +925,7 @@ static void test_share_mmap(char *banner, char *b_suffix)
  */
 static void test_share_open(char *banner, char *b_suffix)
 {
-	int fd, fd2;
+	int procfd, fd, fd2;
 
 	printf("%s %s %s\n", memfd_str, banner, b_suffix);
 
@@ -950,13 +950,16 @@ static void test_share_open(char *banner, char *b_suffix)
 	mfd_assert_has_seals(fd, F_SEAL_WRITE | F_SEAL_SHRINK);
 	mfd_assert_has_seals(fd2, F_SEAL_WRITE | F_SEAL_SHRINK);
 
+	/* We cannot do a MAY_WRITE re-open of an O_RDONLY fd. */
+	procfd = mfd_assert_open(fd2, O_PATH, 0);
 	close(fd2);
-	fd2 = mfd_assert_open(fd, O_RDWR, 0);
+	fd2 = mfd_assert_open(procfd, O_WRONLY, 0);
 
 	mfd_assert_add_seals(fd2, F_SEAL_SEAL);
 	mfd_assert_has_seals(fd, F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_SEAL);
 	mfd_assert_has_seals(fd2, F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_SEAL);
 
+	close(procfd);
 	close(fd2);
 	close(fd);
 }
