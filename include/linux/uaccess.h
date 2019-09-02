@@ -231,6 +231,10 @@ __copy_from_user_inatomic_nocache(void *to, const void __user *from,
 
 #endif		/* ARCH_HAS_NOCACHE_UACCESS */
 
+extern int check_zeroed_user(const void __user *from, size_t size);
+extern int copy_struct_from_user(void *dst, size_t ksize,
+				 const void __user *src, size_t usize);
+
 /*
  * probe_kernel_read(): safely attempt to read from a location
  * @dst: pointer to the buffer that shall take the data
