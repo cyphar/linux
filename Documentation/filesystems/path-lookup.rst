@@ -1152,15 +1152,67 @@ aren't really (and are therefore commonly referred to as "magic-links")::
      lrwx------ 1 neilb neilb 64 Jun 13 10:19 /proc/self/fd/1 -> /dev/pts/4
 
 Every open file descriptor in any process is represented in ``/proc`` by
-something that looks like a symlink.  It is really a reference to the
-target file, not just the name of it.  When you ``readlink`` these
-objects you get a name that might refer to the same file - unless it
-has been unlinked or mounted over.  When ``walk_component()`` follows
-one of these, the ``->get_link()`` method in "procfs" doesn't return
-a string name, but instead calls nd_jump_link() which updates the
-``nameidata`` in place to point to that target.  ``->get_link()`` then
-returns ``NULL``.  Again there is no final component and pick_link()
-returns ``NULL``.
+a magic-link.  While it may look like a regular symlink, it is really a
+reference to the target file, not just the name of it.  When you ``readlink``
+these objects you get a name that might refer to the same file - unless it has
+been unlinked or mounted over.  When ``walk_component()`` follows one of these,
+the ``->get_link()`` method in "procfs" doesn't return a string name, but
+instead calls ``nd_jump_link()`` which updates the ``nameidata`` in place to
+point to that target.  ``->get_link()`` then returns ``NULL``.  Again there is
+no final component and pick_link() returns ``NULL``.
+
+In order to avoid potential re-opening attacks (especially in the context
+of containers), it is necessary to restrict the ability for a trailing
+magic-link to be opened. The restrictions are as follows (and are implemented
+in ``trailing_magiclink()`` which is called at the end of
+``open_last_lookups()`` and after ``do_last()`` in ``do_o_path()``):
+
+* If the ``open()`` is an "ordinary open" (without ``O_PATH``), the access-mode
+  of the ``open()`` call must be permitted by one of the octets in the
+  magic-link's file mode (elsewhere in Linux, ordinary symlinks have a file
+  mode of ``0777`` but this doesn't apply to magic-links). Each "ordinary" file
+  in ``/proc/self/fd/$n`` has the user octet of its file mode set to correspond
+  to the access-mode it was opened with.
+
+  This restriction means that you cannot re-open an ``O_RDONLY`` file
+  descriptor through ``/proc/self/fd/$n`` with ``O_RDWR``.
+
+With ``open(O_PATH)``, there is no ``-EACCES``-enforced restrictions on the
+``open()`` call, but the resulting ``O_PATH`` file descriptor will obey certain
+rules determined by the mode of the magic-link (note that unlike regular
+symlinks, magic-links can have modes other than ``0777``). The
+
+* If the target of the ``open()`` is not a magic-link, ``file->f_mode`` will
+  have ``FMODE_PATH_READ|FMODE_PATH_WRITE`` set unconditionally and thus the
+  corresponding ``/proc/self/fd/$n`` magic-link will have mode ``0777``. This
+  means that for regular files, the ``O_PATH`` descriptor will be re-openable
+  with any mode.
+
+* Otherwise, the ``file->f_mode`` of the new ``O_PATH`` descriptor will match
+  that of the original magic-link (this is based on the mode of the magic-link,
+  which is based on ``file->f_mode`` for ``/proc/self/fd/$n`` magic-links).
+  This means that an ``O_PATH`` of a magic-link gives you no more re-open
+  permissions than the magic-link itself.
+
+With these ``O_PATH`` restrictions, it is still possible to re-open an
+``O_PATH`` file descriptor but you cannot use ``O_PATH`` to work around the
+above restrictions on "ordinary opens" of magic-links.
+
+The mode of a magic-link of a given file descriptor in ``/proc/self/fd/$n``
+will have all write bits set if the file descriptor has ``FMODE_WRITE`` or
+``FMODE_PATH_WRITE``. Ditto for read bits and ``FMODE_READ``. The requirements
+for re-opening and the re-opening inheritance are based on whether any read or
+write bits are set in the mode (in other words, the mode of the magic-link is
+not related to the classic Unix DAC rules).
+
+Userspace can query the status of ``FMODE_PATH_WRITE`` and ``FMODE_PATH_READ``
+along with a few other ``FMODE_*`` bits by looking at the ``f_mode`` line in
+``/proc/self/fdinfo/$n`` or by looking at the magic-link mode.
+
+In order to avoid certain race conditions (where a file descriptor associated
+with a magic-link is swapped, causing the ``link_inode`` of ``nameidata`` to
+become stale during magic-link traversal), ``nd_jump_link()`` stores the mode
+of the magic-link during traversal in ``last_magiclink_mode``.
 
 Following the symlink in the final component
 --------------------------------------------
@@ -1186,7 +1238,12 @@ return the path so that the loop repeats, calling
 link_path_walk() again.  This could loop as many as 40 times if the last
 component of each symlink is another symlink.
 
-Of the various functions that examine the final component, 
+As mentioned above, for ``open()`` we call ``trailing_magiclink()`` after each
+``open_last_lookups()`` (or ``lookup_last()`` call to check each magic-link jump
+in the final component to deal with permission checks relevant to
+``/proc/$pid/fd``-style "symlinks".
+
+Of the various functions that examine the final component,
 open_last_lookups() is the most interesting as it works in tandem
 with do_open() for opening a file.  Part of open_last_lookups() runs
 with ``i_rwsem`` held and this part is in a separate function: lookup_open().
