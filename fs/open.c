@@ -1198,6 +1198,17 @@ SYSCALL_DEFINE4(openat2, int, dfd, const char __user *, filename,
 	if (err)
 		return err;
 
+	if (unlikely(tmp.flags & CHECK_FIELDS)) {
+		memset(&tmp, 0, sizeof(tmp));
+
+		tmp.flags = VALID_OPEN_FLAGS;
+		tmp.mode = S_IALLUGO;
+		tmp.resolve = VALID_RESOLVE_FLAGS;
+
+		err = copy_struct_to_user(how, usize, &tmp, sizeof(tmp));
+		return err ?: -EEXTSYS_NOOP;
+	}
+
 	/* O_LARGEFILE is only allowed for non-O_PATH. */
 	if (!(tmp.flags & O_PATH) && force_o_largefile())
 		tmp.flags |= O_LARGEFILE;
