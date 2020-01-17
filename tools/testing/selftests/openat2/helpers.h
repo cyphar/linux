@@ -23,6 +23,10 @@
 #define SYS_openat2 __NR_openat2
 #endif /* SYS_openat2 */
 
+#ifndef EEXTSYS_NOOP
+#define EEXTSYS_NOOP	134	/* Extensible syscall performed no operation */
+#endif /* EEXTSYS_NOOP */
+
 /*
  * Arguments for how openat2(2) should open the target path. If @resolve is
  * zero, then openat2(2) operates very similarly to openat(2).
@@ -43,6 +47,10 @@ struct open_how {
 
 #define OPEN_HOW_SIZE_VER0	24 /* sizeof first published struct */
 #define OPEN_HOW_SIZE_LATEST	OPEN_HOW_SIZE_VER0
+
+#ifndef CHECK_FIELDS
+#define CHECK_FIELDS (1ULL << 63)
+#endif /* CHECK_FIELDS */
 
 bool needs_openat2(const struct open_how *how);
 

@@ -155,11 +155,15 @@ struct flag_test {
 	int err;
 };
 
-#define NUM_OPENAT2_FLAG_TESTS 23
+#define NUM_OPENAT2_FLAG_TESTS 24
 
 void test_openat2_flags(void)
 {
 	struct flag_test tests[] = {
+		/* CHECK_FIELDS gives you EEXTSYS_NOOP. */
+		{ .name = "CHECK_FIELDS gives EEXTSYS_NOOP",
+		  .how.flags = CHECK_FIELDS, .err = -EEXTSYS_NOOP },
+
 		/* O_TMPFILE is incompatible with O_PATH and O_CREAT. */
 		{ .name = "incompatible flags (O_TMPFILE | O_PATH)",
 		  .how.flags = O_TMPFILE | O_PATH | O_RDWR, .err = -EINVAL },
