@@ -301,6 +301,74 @@ copy_struct_from_user(void *dst, size_t ksize, const void __user *src,
 	return 0;
 }
 
+/**
+ * copy_struct_to_user: copy a struct to userspace
+ * @dst:   Destination address, in userspace. This buffer must be @ksize
+ *         bytes long.
+ * @usize: (Alleged) size of @dst struct.
+ * @src:   Source address, in kernel space.
+ * @ksize: Size of @src struct.
+ *
+ * Copies a struct from kernel space to userspace, in a way that guarantees
+ * backwards-compatibility for struct syscall arguments (as long as future
+ * struct extensions are made such that all new fields are *appended* to the
+ * old struct, and zeroed-out new fields have the same meaning as the old
+ * struct).
+ *
+ * @ksize is just sizeof(*src), and @usize should've been passed by userspace.
+ * The recommended usage is something like the following:
+ *
+ *   SYSCALL_DEFINE2(foobar, struct foo __user *, uarg, size_t, usize)
+ *   {
+ *      int err;
+ *      struct foo karg = {};
+ *
+ *      if (usize > PAGE_SIZE)
+ *        return -E2BIG;
+ *      if (usize < FOO_SIZE_VER0)
+ *        return -EINVAL;
+ *
+ *      // ... modify karg somehow ...
+ *
+ *      err = copy_struct_to_user(uarg, usize, &karg, sizeof(karg));
+ *      if (err)
+ *        return err;
+ *
+ *      // ...
+ *   }
+ *
+ * There are three cases to consider:
+ *  * If @usize == @ksize, then it's copied verbatim.
+ *  * If @usize < @ksize, then the kernel is trying to pass userspace a newer
+ *    struct than it supports. Thus we only copy the interoperable portions
+ *    (@usize) and ignore the rest.
+ *  * If @usize > @ksize, then the kernel is trying to pass userspace an older
+ *    struct than userspace supports. In order to make sure the
+ *    unknown-to-the-kernel fields don't contain garbage values, we zero the
+ *    trailing (@usize - @ksize) bytes.
+ *
+ * Returns (in all cases, some data may have been copied):
+ *  * -EFAULT: access to userspace failed.
+ */
+static __always_inline __must_check int
+copy_struct_to_user(void __user *dst, size_t usize, const void *src,
+		      size_t ksize)
+{
+	size_t size = min(ksize, usize);
+	size_t rest = max(ksize, usize) - size;
+
+	/* Deal with trailing bytes. */
+	if (usize > ksize) {
+		int ret = clear_user(dst + size, rest);
+		if (ret)
+			return ret;
+	}
+	/* Copy the interoperable parts of the struct. */
+	if (copy_to_user(dst, src, size))
+		return -EFAULT;
+	return 0;
+}
+
 /*
  * probe_kernel_read(): safely attempt to read from a location
  * @dst: pointer to the buffer that shall take the data
