@@ -961,3 +961,36 @@ out:
 	kfree(ctx);
 	return err;
 }
+
+int bpf_prog_test_run_cgroup_dev(struct bpf_prog *prog,
+				 const union bpf_attr *kattr,
+				 union bpf_attr __user *uattr)
+{
+	struct bpf_cgroup_dev_ctx *ctx;
+	int ret = -EINVAL;
+	u32 retval;
+
+	if (prog->type != BPF_PROG_TYPE_CGROUP_DEVICE)
+		return -EINVAL;
+
+	/* Don't support data_out, ctx_in/out, duration, repeat, or flags. */
+	if (kattr->test.ctx_in || kattr->test.ctx_out ||
+	    kattr->test.data_out || kattr->test.duration ||
+	    kattr->test.repeat || kattr->test.flags)
+		return -EINVAL;
+
+	ctx = bpf_ctx_init(kattr, sizeof(struct bpf_cgroup_dev_ctx));
+	if (!ctx)
+		return -ENOMEM;
+
+	rcu_read_lock();
+	retval = BPF_PROG_RUN(prog, ctx);
+	rcu_read_unlock();
+
+	ret = 0;
+	if (copy_to_user(&uattr->test.retval, &retval, sizeof(u32)))
+		ret = -EFAULT;
+
+	kfree(ctx);
+	return ret;
+}

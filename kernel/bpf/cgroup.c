@@ -1200,6 +1200,7 @@ static bool cgroup_dev_is_valid_access(int off, int size,
 }
 
 const struct bpf_prog_ops cg_dev_prog_ops = {
+	.test_run	= bpf_prog_test_run_cgroup_dev,
 };
 
 const struct bpf_verifier_ops cg_dev_verifier_ops = {
