@@ -15,11 +15,13 @@
  * @flags: O_* flags.
  * @mode: O_CREAT/O_TMPFILE file mode.
  * @resolve: RESOLVE_* flags.
+ * @reopen: REOPEN_* re-opening restriction flags.
  */
 struct open_how {
 	__u64 flags;
 	__u64 mode;
 	__u64 resolve;
+	__u64 reopen;
 };
 
 /* how->resolve flags for openat2(2). */
@@ -39,5 +41,10 @@ struct open_how {
 					completed through cached lookup. May
 					return -EAGAIN if that's not
 					possible. */
+
+/* how->reopen flags to restrict the reopenability of O_PATH fds. */
+/* Bit 1 is reserved for REOPEN_NO_EXEC. */
+#define REOPEN_NO_WRITE	0x02 /* Block reopening with write access. */
+#define REOPEN_NO_READ	0x04 /* Block reopening with read access. */
 
 #endif /* _UAPI_LINUX_OPENAT2_H */

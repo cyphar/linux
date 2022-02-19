@@ -1212,9 +1212,19 @@ inline int build_open_flags(const struct open_how *how, struct open_flags *op)
 		/* O_PATH only permits certain other flags to be set. */
 		if (flags & ~O_PATH_FLAGS)
 			return -EINVAL;
+		if (how->reopen & ~VALID_REOPEN_FLAGS)
+			return -EINVAL;
 		/* For O_PATH backwards-compatibility we default to an all-set mask. */
 		op->opath_mask = FMODE_PATH_READ | FMODE_PATH_WRITE;
+		if (how->reopen & REOPEN_NO_READ)
+			op->opath_mask &= ~FMODE_PATH_READ;
+		if (how->reopen & REOPEN_NO_WRITE)
+			op->opath_mask &= ~FMODE_PATH_WRITE;
 		acc_mode = 0;
+	} else {
+		/* Non-O_PATH file descriptors are re-openable based on acc_mode. */
+		if (how->reopen != 0)
+			return -EINVAL;
 	}
 
 	/*
