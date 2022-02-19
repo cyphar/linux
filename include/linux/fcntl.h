@@ -17,9 +17,13 @@
 	(RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | \
 	 RESOLVE_BENEATH | RESOLVE_IN_ROOT | RESOLVE_CACHED)
 
+/* List of all valid flags for the how->reopen argument: */
+#define VALID_REOPEN_FLAGS	(REOPEN_NO_READ | REOPEN_NO_WRITE)
+
 /* List of all open_how "versions". */
-#define OPEN_HOW_SIZE_VER0	24 /* sizeof first published struct */
-#define OPEN_HOW_SIZE_LATEST	OPEN_HOW_SIZE_VER0
+#define OPEN_HOW_SIZE_VER0	24 /* first published open_how struct */
+#define OPEN_HOW_SIZE_VER1	32 /* open_how->reopen added */
+#define OPEN_HOW_SIZE_LATEST	OPEN_HOW_SIZE_VER1
 
 #ifndef force_o_largefile
 #define force_o_largefile() (!IS_ENABLED(CONFIG_ARCH_32BIT_OFF_T))
