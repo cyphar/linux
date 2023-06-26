@@ -218,6 +218,7 @@ static struct dentry *proc_fd_instantiate(struct dentry *dentry,
 	tid_fd_update_inode(task, inode, data->mode);
 
 	d_set_d_op(dentry, &tid_fd_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 
@@ -392,6 +393,7 @@ static struct dentry *proc_fdinfo_instantiate(struct dentry *dentry,
 	tid_fd_update_inode(task, inode, 0);
 
 	d_set_d_op(dentry, &tid_fd_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 

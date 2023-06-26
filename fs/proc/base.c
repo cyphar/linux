@@ -2301,6 +2301,7 @@ proc_map_files_instantiate(struct dentry *dentry,
 	inode->i_size = 64;
 
 	d_set_d_op(dentry, &tid_map_files_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 
@@ -2673,6 +2674,7 @@ static struct dentry *proc_pident_instantiate(struct dentry *dentry,
 	ei->op = p->op;
 	pid_update_inode(task, inode);
 	d_set_d_op(dentry, &pid_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 
@@ -3446,6 +3448,7 @@ static struct dentry *proc_pid_instantiate(struct dentry * dentry,
 	pid_update_inode(task, inode);
 
 	d_set_d_op(dentry, &pid_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 
@@ -3750,6 +3753,7 @@ static struct dentry *proc_task_instantiate(struct dentry *dentry,
 	pid_update_inode(task, inode);
 
 	d_set_d_op(dentry, &pid_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 

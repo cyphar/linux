@@ -112,6 +112,7 @@ static struct dentry *proc_ns_instantiate(struct dentry *dentry,
 	pid_update_inode(task, inode);
 
 	d_set_d_op(dentry, &pid_dentry_operations);
+	dont_mount(dentry);
 	return d_splice_alias(inode, dentry);
 }
 
