@@ -278,6 +278,7 @@ SYSCALL_DEFINE2(memfd_create,
 	int fd, error;
 	char *name;
 	long len;
+	int noexec_scope = task_active_pid_ns(current)->memfd_noexec_scope;
 
 	if (!(flags & MFD_HUGETLB)) {
 		if (flags & ~(unsigned int)MFD_ALL_FLAGS)
@@ -295,32 +296,31 @@ SYSCALL_DEFINE2(memfd_create,
 
 	if (!(flags & (MFD_EXEC | MFD_NOEXEC_SEAL))) {
 #ifdef CONFIG_SYSCTL
-		int sysctl = MEMFD_NOEXEC_SCOPE_EXEC;
-		struct pid_namespace *ns;
-
-		ns = task_active_pid_ns(current);
-		if (ns)
-			sysctl = ns->memfd_noexec_scope;
-
-		switch (sysctl) {
+		switch (noexec_scope) {
 		case MEMFD_NOEXEC_SCOPE_EXEC:
 			flags |= MFD_EXEC;
 			break;
 		case MEMFD_NOEXEC_SCOPE_NOEXEC_SEAL:
+			fallthrough;
+		case MEMFD_NOEXEC_SCOPE_NOEXEC_ENFORCED:
 			flags |= MFD_NOEXEC_SEAL;
 			break;
-		default:
-			pr_warn_once(
-				"memfd_create(): MFD_NOEXEC_SEAL is enforced, pid=%d '%s'\n",
-				task_pid_nr(current), get_task_comm(comm, current));
-			return -EINVAL;
 		}
 #else
 		flags |= MFD_EXEC;
 #endif
-		pr_warn_once(
-			"memfd_create() without MFD_EXEC nor MFD_NOEXEC_SEAL, pid=%d '%s'\n",
+
+		pr_warn_ratelimited(
+			"%s[%d]: memfd_create() called without MFD_EXEC or MFD_NOEXEC_SEAL set\n",
 			task_pid_nr(current), get_task_comm(comm, current));
+	}
+
+	if (noexec_scope >= MEMFD_NOEXEC_SCOPE_NOEXEC_ENFORCED &&
+	    !(flags & MFD_NOEXEC_SEAL)) {
+		pr_warn_ratelimited(
+			"%s[%d]: memfd_create() requires MFD_NOEXEC_SEAL with vm.memfd_noexec=%d\n",
+			task_pid_nr(current), get_task_comm(comm, current), noexec_scope);
+		return -EPERM;
 	}
 
 	/* length includes terminating zero */
