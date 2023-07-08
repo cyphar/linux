@@ -1082,6 +1082,37 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 	if (!sk)
 		goto path_put;
 
+	err = mnt_want_write(path.mnt);
+	if (!err) {
+		/*
+		 * It is safe to just mnt_drop_write immediately here because
+		 * we are not actually writing to the underlying filesystem,
+		 * and we don't want to block ro-remounts if there is a
+		 * connection to a unix socket on said filesystem. We also
+		 * don't care that this is racey, if an admin ro- or
+		 * rw-remounts the filesystem after this check, that's their
+		 * business.
+		 */
+		mnt_drop_write(path.mnt);
+	} else {
+		char comm[TASK_COMM_LEN];
+
+		pr_warn_ratelimited(
+			"net: af_unix: %s[%d]: process tried to connect to socket %s on read-only filesystem\n",
+			get_task_comm(comm, current),
+			task_pid_nr(current),
+			sunaddr->sun_path);
+
+		/*
+		 * We really only care about the *socket's* netns setting from
+		 * a security perspective, but check both for consistency's
+		 * sake.
+		 */
+		if (sock_net(sk)->unx.sysctl_verify_erofs ||
+		    current->nsproxy->net_ns->unx.sysctl_verify_erofs)
+			goto sock_put;
+	}
+
 	err = -EPROTOTYPE;
 	if (sk->sk_type == type)
 		touch_atime(&path);

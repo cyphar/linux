@@ -19,6 +19,16 @@ static struct ctl_table unix_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
+	{
+		.procname	= "verify_erofs",
+		.data		= &init_net.unx.sysctl_verify_erofs,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		/* only handle a transition from default "0" to "1" */
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ONE,
+		.extra2		= SYSCTL_ONE,
+	},
 	{ }
 };
 
@@ -34,6 +44,7 @@ int __net_init unix_sysctl_register(struct net *net)
 			goto err_alloc;
 
 		table[0].data = &net->unx.sysctl_max_dgram_qlen;
+		table[1].data = &net->unx.sysctl_verify_erofs;
 	}
 
 	net->unx.ctl = register_net_sysctl(net, "net/unix", table);

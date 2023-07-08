@@ -16,6 +16,7 @@ struct ctl_table_header;
 struct netns_unix {
 	struct unix_table	table;
 	int			sysctl_max_dgram_qlen;
+	int			sysctl_verify_erofs;
 	struct ctl_table_header	*ctl;
 };
 
