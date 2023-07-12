@@ -24,13 +24,6 @@ static int pid_mfd_noexec_dointvec_minmax(struct ctl_table *table,
 	if (ns != &init_pid_ns)
 		table_copy.data = &ns->memfd_noexec_scope;
 
-	/*
-	 * set minimum to current value, the effect is only bigger
-	 * value is accepted.
-	 */
-	if (*(int *)table_copy.data > *(int *)table_copy.extra1)
-		table_copy.extra1 = table_copy.data;
-
 	return proc_dointvec_minmax(&table_copy, write, buf, lenp, ppos);
 }
 
