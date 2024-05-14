@@ -188,6 +188,11 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 		if (fd_file) {
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
+			/* Ensure the restrict_mask is correct. */
+			if (!(fd_file->f_mode & FMODE_READ))
+				path->restrict_mask |= PATH_RESTRICT_NOREAD;
+			if (!(fd_file->f_mode & FMODE_WRITE))
+				path->restrict_mask |= PATH_RESTRICT_NOWRITE;
 			ret = 0;
 			fput(fd_file);
 		}

@@ -391,7 +391,8 @@ retry:
 	}
 
 	error = inode_permission(file_mnt_idmap(filp),
-				 dir, MAY_WRITE | MAY_EXEC);
+				 dir, dst_path.restrict_mask,
+				 MAY_WRITE | MAY_EXEC);
 	if (error)
 		goto err3;
 

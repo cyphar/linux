@@ -878,8 +878,9 @@ static int prepare_open(struct dentry *dentry, int oflag, int ro,
 		if (ro)
 			return ro;
 		audit_inode_parent_hidden(name, dentry->d_parent);
-		return vfs_mkobj(dentry, mode & ~current_umask(),
-				  mqueue_create_attr, attr);
+		return vfs_mkobj(drestrict_mask, PATH_RESTRICT_NONE,
+				 entry, mode & ~current_umask(),
+				 mqueue_create_attr, attr);
 	}
 	/* it already existed */
 	audit_inode(name, dentry, 0);
@@ -888,7 +889,8 @@ static int prepare_open(struct dentry *dentry, int oflag, int ro,
 	if ((oflag & O_ACCMODE) == (O_RDWR | O_WRONLY))
 		return -EINVAL;
 	acc = oflag2acc[oflag & O_ACCMODE];
-	return inode_permission(&nop_mnt_idmap, d_inode(dentry), acc);
+	return inode_permission(&nop_mnt_idmap, d_inode(dentry),
+				PATH_RESTRICT_NONE, acc);
 }
 
 static int do_mq_open(const char __user *u_name, int oflag, umode_t mode,

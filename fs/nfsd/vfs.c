@@ -111,14 +111,14 @@ nfserrno (int errno)
 	return nfserr_io;
 }
 
-/* 
- * Called from nfsd_lookup and encode_dirent. Check if we have crossed 
+/*
+ * Called from nfsd_lookup and encode_dirent. Check if we have crossed
  * a mount point.
  * Returns -EAGAIN or -ETIMEDOUT leaving *dpp and *expp unchanged,
  *  or nfs_ok having possibly changed *dpp and *expp
  */
 int
-nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp, 
+nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
 		        struct svc_export **expp)
 {
 	struct svc_export *exp = *expp, *exp2 = NULL;
@@ -819,7 +819,7 @@ nfsd_access(struct svc_rqst *rqstp, struct svc_fh *fhp, u32 *access, u32 *suppor
 			case nfs_ok:
 				result |= map->access;
 				break;
-				
+
 			/* the following error codes just mean the access was not allowed,
 			 * rather than an error occurred */
 			case nfserr_rofs:
@@ -1887,12 +1887,14 @@ retry:
 		goto out_dput_old;
 	} else {
 		struct renamedata rd = {
-			.old_mnt_idmap	= &nop_mnt_idmap,
-			.old_dir	= fdir,
-			.old_dentry	= odentry,
-			.new_mnt_idmap	= &nop_mnt_idmap,
-			.new_dir	= tdir,
-			.new_dentry	= ndentry,
+			.old_mnt_idmap		= &nop_mnt_idmap,
+			.old_dir		= fdir,
+			.old_dir_restrict_mask	= PATH_RESTRICT_NONE,
+			.old_dentry		= odentry,
+			.new_mnt_idmap		= &nop_mnt_idmap,
+			.new_dir		= tdir,
+			.new_dir_restrict_mask	= PATH_RESTRICT_NONE,
+			.new_dentry		= ndentry,
 		};
 		int retries;
 
@@ -2170,7 +2172,7 @@ static __be32 nfsd_buffered_readdir(struct file *file, struct svc_fh *fhp,
  * returned.
  */
 __be32
-nfsd_readdir(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t *offsetp, 
+nfsd_readdir(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t *offsetp,
 	     struct readdir_cd *cdp, nfsd_filldir_t func)
 {
 	__be32		err;
@@ -2528,7 +2530,7 @@ nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
 #endif
 
 	/* Normally we reject any write/sattr etc access on a read-only file
-	 * system.  But if it is IRIX doing check on write-access for a 
+	 * system.  But if it is IRIX doing check on write-access for a
 	 * device special file, we ignore rofs.
 	 */
 	if (!(acc & NFSD_MAY_LOCAL_ACCESS))
@@ -2571,14 +2573,15 @@ nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
 		return 0;
 
 	/* This assumes  NFSD_MAY_{READ,WRITE,EXEC} == MAY_{READ,WRITE,EXEC} */
-	err = inode_permission(&nop_mnt_idmap, inode,
+	err = inode_permission(&nop_mnt_idmap, inode, PATH_RESTRICT_NONE,
 			       acc & (MAY_READ | MAY_WRITE | MAY_EXEC));
 
 	/* Allow read access to binaries even when mode 111 */
 	if (err == -EACCES && S_ISREG(inode->i_mode) &&
 	     (acc == (NFSD_MAY_READ | NFSD_MAY_OWNER_OVERRIDE) ||
 	      acc == (NFSD_MAY_READ | NFSD_MAY_READ_IF_EXEC)))
-		err = inode_permission(&nop_mnt_idmap, inode, MAY_EXEC);
+		err = inode_permission(&nop_mnt_idmap, inode,
+				       PATH_RESTRICT_NONE, MAY_EXEC);
 
 	return err? nfserrno(err) : 0;
 }

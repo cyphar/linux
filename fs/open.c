@@ -36,11 +36,12 @@
 
 #include "internal.h"
 
-int do_truncate(struct mnt_idmap *idmap, struct dentry *dentry,
+int do_truncate(struct mnt_idmap *idmap, const struct path *path,
 		loff_t length, unsigned int time_attrs, struct file *filp)
 {
 	int ret;
 	struct iattr newattrs;
+	struct dentry *dentry = path->dentry;
 
 	/* Not pretty: "inode->i_size" shouldn't really be signed. But it is. */
 	if (length < 0)
@@ -62,7 +63,7 @@ int do_truncate(struct mnt_idmap *idmap, struct dentry *dentry,
 
 	inode_lock(dentry->d_inode);
 	/* Note any delegations or leases have already been broken: */
-	ret = notify_change(idmap, dentry, &newattrs, NULL);
+	ret = notify_change(idmap, dentry, path->restrict_mask, &newattrs, NULL);
 	inode_unlock(dentry->d_inode);
 	return ret;
 }
@@ -85,8 +86,7 @@ long vfs_truncate(const struct path *path, loff_t length)
 	if (error)
 		goto out;
 
-	idmap = mnt_idmap(path->mnt);
-	error = inode_permission(idmap, inode, MAY_WRITE);
+	error = path_permission(path, MAY_WRITE);
 	if (error)
 		goto mnt_drop_write_and_out;
 
@@ -106,9 +106,10 @@ long vfs_truncate(const struct path *path, loff_t length)
 	if (error)
 		goto put_write_and_out;
 
+	idmap = mnt_idmap(path->mnt);
 	error = security_path_truncate(path);
 	if (!error)
-		error = do_truncate(idmap, path->dentry, length, 0, NULL);
+		error = do_truncate(idmap, path, length, 0, NULL);
 
 put_write_and_out:
 	put_write_access(inode);
@@ -155,16 +156,14 @@ COMPAT_SYSCALL_DEFINE2(truncate, const char __user *, path, compat_off_t, length
 
 long do_ftruncate(struct file *file, loff_t length, int small)
 {
-	struct inode *inode;
-	struct dentry *dentry;
+	struct path *path = &file->f_path;
+	struct inode *inode = path->dentry->d_inode;
 	int error;
 
 	/* explicitly opened as large or we are on 64-bit box */
 	if (file->f_flags & O_LARGEFILE)
 		small = 0;
 
-	dentry = file->f_path.dentry;
-	inode = dentry->d_inode;
 	if (!S_ISREG(inode->i_mode) || !(file->f_mode & FMODE_WRITE))
 		return -EINVAL;
 
@@ -178,8 +177,8 @@ long do_ftruncate(struct file *file, loff_t length, int small)
 	sb_start_write(inode->i_sb);
 	error = security_file_truncate(file);
 	if (!error)
-		error = do_truncate(file_mnt_idmap(file), dentry, length,
-				    ATTR_MTIME | ATTR_CTIME, file);
+		error = do_truncate(file_mnt_idmap(file), path,
+				    length, ATTR_MTIME | ATTR_CTIME, file);
 	sb_end_write(inode->i_sb);
 
 	return error;
@@ -503,7 +502,8 @@ retry:
 			goto out_path_release;
 	}
 
-	res = inode_permission(mnt_idmap(path.mnt), inode, mode | MAY_ACCESS);
+	res = inode_permission(mnt_idmap(path.mnt), inode, path.restrict_mask,
+			       mode | MAY_ACCESS);
 	/* SuS v2 requires we report a read only fs too */
 	if (res || !(mode & S_IWOTH) || special_file(inode->i_mode))
 		goto out_path_release;
@@ -648,6 +648,7 @@ retry_deleg:
 	newattrs.ia_mode = (mode & S_IALLUGO) | (inode->i_mode & ~S_IALLUGO);
 	newattrs.ia_valid = ATTR_MODE | ATTR_CTIME;
 	error = notify_change(mnt_idmap(path->mnt), path->dentry,
+			      path->restrict_mask,
 			      &newattrs, &delegated_inode);
 out_unlock:
 	inode_unlock(inode);
@@ -787,8 +788,8 @@ retry_deleg:
 		from_vfsuid(idmap, fs_userns, newattrs.ia_vfsuid),
 		from_vfsgid(idmap, fs_userns, newattrs.ia_vfsgid));
 	if (!error)
-		error = notify_change(idmap, path->dentry, &newattrs,
-				      &delegated_inode);
+		error = notify_change(idmap, path->dentry, path->restrict_mask,
+				      &newattrs, &delegated_inode);
 	inode_unlock(inode);
 	if (delegated_inode) {
 		error = break_deleg_wait(&delegated_inode);
@@ -1112,13 +1113,15 @@ EXPORT_SYMBOL(dentry_open);
 
 /**
  * dentry_create - Create and open a file
+ * @dir: path to parent directory
+ * @dentry: negative dentry of new file
  * @path: path to create
  * @flags: O_ flags
  * @mode: mode bits for new file
  * @cred: credentials to use
  *
- * Caller must hold the parent directory's lock, and have prepared
- * a negative dentry, placed in @path->dentry, for the new file.
+ * Caller must hold the parent directory @dir's lock, and have prepared
+ * a negative dentry @dentry for the new file.
  *
  * Caller sets @path->mnt to the vfsmount of the filesystem where
  * the new file is to be created. The parent directory and the
@@ -1127,9 +1130,14 @@ EXPORT_SYMBOL(dentry_open);
  * On success, returns a "struct file *". Otherwise a ERR_PTR
  * is returned.
  */
-struct file *dentry_create(const struct path *path, int flags, umode_t mode,
-			   const struct cred *cred)
+struct file *dentry_create(const struct path *dir, struct dentry *dentry,
+			   int flags, umode_t mode, const struct cred *cred)
 {
+	struct path path = {
+		.mnt = dir->mnt,
+		.dentry = dentry,
+		.restrict_mask = dir->restrict_mask,
+	};
 	struct file *f;
 	int error;
 
@@ -1137,11 +1145,9 @@ struct file *dentry_create(const struct path *path, int flags, umode_t mode,
 	if (IS_ERR(f))
 		return f;
 
-	error = vfs_create(mnt_idmap(path->mnt),
-			   d_inode(path->dentry->d_parent),
-			   path->dentry, mode, true);
+	error = vfs_path_create(dir, dentry, mode, true);
 	if (!error)
-		error = vfs_open(path, f);
+		error = vfs_open(&path, f);
 
 	if (unlikely(error)) {
 		fput(f);

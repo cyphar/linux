@@ -1728,6 +1728,7 @@ static int proc_exe_link(struct dentry *dentry, struct path *exe_path)
 	put_task_struct(task);
 	if (exe_file) {
 		*exe_path = exe_file->f_path;
+		exe_path->restrict_mask |= PATH_RESTRICT_NOWRITE;
 		path_get(&exe_file->f_path);
 		fput(exe_file);
 		return 0;
@@ -1752,6 +1753,12 @@ static const char *proc_pid_get_link(struct dentry *dentry,
 	error = PROC_I(inode)->op.proc_get_link(dentry, &path);
 	if (error)
 		goto out;
+
+	/* Make sure that the path's restrict_mask matches the symlink mode. */
+	if (unlikely(!(inode->i_mode & S_IRUGO)))
+		path.restrict_mask |= PATH_RESTRICT_NOREAD;
+	if (unlikely(!(inode->i_mode & S_IWUGO)))
+		path.restrict_mask |= PATH_RESTRICT_NOWRITE;
 
 	error = nd_jump_link(&path);
 out:
@@ -2654,7 +2661,7 @@ static struct dentry *proc_pident_instantiate(struct dentry *dentry,
 	return d_splice_alias(inode, dentry);
 }
 
-static struct dentry *proc_pident_lookup(struct inode *dir, 
+static struct dentry *proc_pident_lookup(struct inode *dir,
 					 struct dentry *dentry,
 					 const struct pid_entry *p,
 					 const struct pid_entry *end)
@@ -2867,7 +2874,7 @@ static const struct pid_entry attr_dir_stuff[] = {
 
 static int proc_attr_dir_readdir(struct file *file, struct dir_context *ctx)
 {
-	return proc_pident_readdir(file, ctx, 
+	return proc_pident_readdir(file, ctx,
 				   attr_dir_stuff, ARRAY_SIZE(attr_dir_stuff));
 }
 

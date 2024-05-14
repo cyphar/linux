@@ -156,8 +156,8 @@ int __init init_mknod(const char *filename, umode_t mode, unsigned int dev)
 	mode = mode_strip_umask(d_inode(path.dentry), mode);
 	error = security_path_mknod(&path, dentry, mode, dev);
 	if (!error)
-		error = vfs_mknod(mnt_idmap(path.mnt), path.dentry->d_inode,
-				  dentry, mode, new_decode_dev(dev));
+		error = vfs_path_mknod(&path, mode, dentry,
+				       new_decode_dev(dev));
 	done_path_create(&path, dentry);
 	return error;
 }
@@ -188,8 +188,7 @@ int __init init_link(const char *oldname, const char *newname)
 	error = security_path_link(old_path.dentry, &new_path, new_dentry);
 	if (error)
 		goto out_dput;
-	error = vfs_link(old_path.dentry, idmap, new_path.dentry->d_inode,
-			 new_dentry, NULL);
+	error = vfs_path_link(old_path.dentry, &new_path, new_dentry, NULL);
 out_dput:
 	done_path_create(&new_path, new_dentry);
 out:
@@ -208,8 +207,7 @@ int __init init_symlink(const char *oldname, const char *newname)
 		return PTR_ERR(dentry);
 	error = security_path_symlink(&path, dentry, oldname);
 	if (!error)
-		error = vfs_symlink(mnt_idmap(path.mnt), path.dentry->d_inode,
-				    dentry, oldname);
+		error = vfs_path_symlink(&path, dentry, oldname);
 	done_path_create(&path, dentry);
 	return error;
 }
@@ -231,8 +229,7 @@ int __init init_mkdir(const char *pathname, umode_t mode)
 	mode = mode_strip_umask(d_inode(path.dentry), mode);
 	error = security_path_mkdir(&path, dentry, mode);
 	if (!error)
-		error = vfs_mkdir(mnt_idmap(path.mnt), path.dentry->d_inode,
-				  dentry, mode);
+		error = vfs_path_mkdir(&path, dentry, mode);
 	done_path_create(&path, dentry);
 	return error;
 }

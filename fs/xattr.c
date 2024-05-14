@@ -110,7 +110,8 @@ int may_write_xattr(struct mnt_idmap *idmap, struct inode *inode)
  * because different namespaces have very different rules.
  */
 static int
-xattr_permission(struct mnt_idmap *idmap, struct inode *inode,
+xattr_permission(struct mnt_idmap *idmap,
+		 struct inode *inode, path_restrict_t restrict_mask,
 		 const char *name, int mask)
 {
 	if (mask & MAY_WRITE) {
@@ -152,7 +153,7 @@ xattr_permission(struct mnt_idmap *idmap, struct inode *inode,
 			return -EPERM;
 	}
 
-	return inode_permission(idmap, inode, mask);
+	return inode_permission(idmap, inode, restrict_mask, mask);
 }
 
 /*
@@ -272,14 +273,15 @@ int __vfs_setxattr_noperm(struct mnt_idmap *idmap,
  *  a delegation was broken on, NULL if none.
  */
 int
-__vfs_setxattr_locked(struct mnt_idmap *idmap, struct dentry *dentry,
+__vfs_setxattr_locked(struct mnt_idmap *idmap,
+		      struct dentry *dentry, path_restrict_t restrict_mask,
 		      const char *name, const void *value, size_t size,
 		      int flags, struct inode **delegated_inode)
 {
 	struct inode *inode = dentry->d_inode;
 	int error;
 
-	error = xattr_permission(idmap, inode, name, MAY_WRITE);
+	error = xattr_permission(idmap, inode, restrict_mask, name, MAY_WRITE);
 	if (error)
 		return error;
 
@@ -301,7 +303,8 @@ out:
 EXPORT_SYMBOL_GPL(__vfs_setxattr_locked);
 
 int
-vfs_setxattr(struct mnt_idmap *idmap, struct dentry *dentry,
+vfs_setxattr(struct mnt_idmap *idmap,
+	     struct dentry *dentry, path_restrict_t restrict_mask,
 	     const char *name, const void *value, size_t size, int flags)
 {
 	struct inode *inode = dentry->d_inode;
@@ -318,8 +321,9 @@ vfs_setxattr(struct mnt_idmap *idmap, struct dentry *dentry,
 
 retry_deleg:
 	inode_lock(inode);
-	error = __vfs_setxattr_locked(idmap, dentry, name, value, size,
-				      flags, &delegated_inode);
+	error = __vfs_setxattr_locked(idmap, dentry, restrict_mask,
+				      name, value, size, flags,
+				      &delegated_inode);
 	inode_unlock(inode);
 
 	if (delegated_inode) {
@@ -372,7 +376,8 @@ out_noalloc:
  * Returns the result of alloc, if failed, or the getxattr operation.
  */
 int
-vfs_getxattr_alloc(struct mnt_idmap *idmap, struct dentry *dentry,
+vfs_getxattr_alloc(struct mnt_idmap *idmap,
+		   struct dentry *dentry, path_restrict_t restrict_mask,
 		   const char *name, char **xattr_value, size_t xattr_size,
 		   gfp_t flags)
 {
@@ -381,7 +386,7 @@ vfs_getxattr_alloc(struct mnt_idmap *idmap, struct dentry *dentry,
 	char *value = *xattr_value;
 	int error;
 
-	error = xattr_permission(idmap, inode, name, MAY_READ);
+	error = xattr_permission(idmap, inode, restrict_mask, name, MAY_READ);
 	if (error)
 		return error;
 
@@ -425,13 +430,14 @@ __vfs_getxattr(struct dentry *dentry, struct inode *inode, const char *name,
 EXPORT_SYMBOL(__vfs_getxattr);
 
 ssize_t
-vfs_getxattr(struct mnt_idmap *idmap, struct dentry *dentry,
+vfs_getxattr(struct mnt_idmap *idmap,
+	     struct dentry *dentry, path_restrict_t restrict_mask,
 	     const char *name, void *value, size_t size)
 {
 	struct inode *inode = dentry->d_inode;
 	int error;
 
-	error = xattr_permission(idmap, inode, name, MAY_READ);
+	error = xattr_permission(idmap, inode, restrict_mask, name, MAY_READ);
 	if (error)
 		return error;
 
@@ -532,13 +538,13 @@ EXPORT_SYMBOL(__vfs_removexattr);
  */
 int
 __vfs_removexattr_locked(struct mnt_idmap *idmap,
-			 struct dentry *dentry, const char *name,
-			 struct inode **delegated_inode)
+			 struct dentry *dentry, path_restrict_t restrict_mask,
+			 const char *name, struct inode **delegated_inode)
 {
 	struct inode *inode = dentry->d_inode;
 	int error;
 
-	error = xattr_permission(idmap, inode, name, MAY_WRITE);
+	error = xattr_permission(idmap, inode, restrict_mask, name, MAY_WRITE);
 	if (error)
 		return error;
 
@@ -563,7 +569,8 @@ out:
 EXPORT_SYMBOL_GPL(__vfs_removexattr_locked);
 
 int
-vfs_removexattr(struct mnt_idmap *idmap, struct dentry *dentry,
+vfs_removexattr(struct mnt_idmap *idmap,
+		struct dentry *dentry, path_restrict_t restrict_mask,
 		const char *name)
 {
 	struct inode *inode = dentry->d_inode;
@@ -572,7 +579,7 @@ vfs_removexattr(struct mnt_idmap *idmap, struct dentry *dentry,
 
 retry_deleg:
 	inode_lock(inode);
-	error = __vfs_removexattr_locked(idmap, dentry,
+	error = __vfs_removexattr_locked(idmap, dentry, restrict_mask,
 					 name, &delegated_inode);
 	inode_unlock(inode);
 
@@ -620,20 +627,21 @@ int setxattr_copy(const char __user *name, struct xattr_ctx *ctx)
 }
 
 int do_setxattr(struct mnt_idmap *idmap, struct dentry *dentry,
-		struct xattr_ctx *ctx)
+		path_restrict_t restrict_mask, struct xattr_ctx *ctx)
 {
 	if (is_posix_acl_xattr(ctx->kname->name))
 		return do_set_acl(idmap, dentry, ctx->kname->name,
 				  ctx->kvalue, ctx->size);
 
-	return vfs_setxattr(idmap, dentry, ctx->kname->name,
+	return vfs_setxattr(idmap, dentry, restrict_mask, ctx->kname->name,
 			ctx->kvalue, ctx->size, ctx->flags);
 }
 
 static long
-setxattr(struct mnt_idmap *idmap, struct dentry *d,
-	const char __user *name, const void __user *value, size_t size,
-	int flags)
+setxattr(struct mnt_idmap *idmap,
+	 struct dentry *d, path_restrict_t restrict_mask,
+	 const char __user *name, const void __user *value, size_t size,
+	 int flags)
 {
 	struct xattr_name kname;
 	struct xattr_ctx ctx = {
@@ -649,7 +657,7 @@ setxattr(struct mnt_idmap *idmap, struct dentry *d,
 	if (error)
 		return error;
 
-	error = do_setxattr(idmap, d, &ctx);
+	error = do_setxattr(idmap, d, restrict_mask, &ctx);
 
 	kvfree(ctx.kvalue);
 	return error;
@@ -668,8 +676,9 @@ retry:
 		return error;
 	error = mnt_want_write(path.mnt);
 	if (!error) {
-		error = setxattr(mnt_idmap(path.mnt), path.dentry, name,
-				 value, size, flags);
+		error = setxattr(mnt_idmap(path.mnt),
+				 path.dentry, path.restrict_mask,
+				 name, value, size, flags);
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -706,8 +715,9 @@ SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 	error = mnt_want_write_file(f.file);
 	if (!error) {
 		error = setxattr(file_mnt_idmap(f.file),
-				 f.file->f_path.dentry, name,
-				 value, size, flags);
+				 f.file->f_path.dentry,
+				 f.file->f_path.restrict_mask,
+				 name, value, size, flags);
 		mnt_drop_write_file(f.file);
 	}
 	fdput(f);
@@ -718,8 +728,9 @@ SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
  * Extended attribute GET operations
  */
 ssize_t
-do_getxattr(struct mnt_idmap *idmap, struct dentry *d,
-	struct xattr_ctx *ctx)
+do_getxattr(struct mnt_idmap *idmap,
+	    struct dentry *d, path_restrict_t restrict_mask,
+	    struct xattr_ctx *ctx)
 {
 	ssize_t error;
 	char *kname = ctx->kname->name;
@@ -735,7 +746,8 @@ do_getxattr(struct mnt_idmap *idmap, struct dentry *d,
 	if (is_posix_acl_xattr(ctx->kname->name))
 		error = do_get_acl(idmap, d, kname, ctx->kvalue, ctx->size);
 	else
-		error = vfs_getxattr(idmap, d, kname, ctx->kvalue, ctx->size);
+		error = vfs_getxattr(idmap, d, restrict_mask,
+				     kname, ctx->kvalue, ctx->size);
 	if (error > 0) {
 		if (ctx->size && copy_to_user(ctx->value, ctx->kvalue, error))
 			error = -EFAULT;
@@ -749,7 +761,8 @@ do_getxattr(struct mnt_idmap *idmap, struct dentry *d,
 }
 
 static ssize_t
-getxattr(struct mnt_idmap *idmap, struct dentry *d,
+getxattr(struct mnt_idmap *idmap,
+	 struct dentry *d, path_restrict_t restrict_mask,
 	 const char __user *name, void __user *value, size_t size)
 {
 	ssize_t error;
@@ -768,7 +781,7 @@ getxattr(struct mnt_idmap *idmap, struct dentry *d,
 	if (error < 0)
 		return error;
 
-	error =  do_getxattr(idmap, d, &ctx);
+	error =  do_getxattr(idmap, d, restrict_mask, &ctx);
 
 	kvfree(ctx.kvalue);
 	return error;
@@ -784,7 +797,8 @@ retry:
 	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
 	if (error)
 		return error;
-	error = getxattr(mnt_idmap(path.mnt), path.dentry, name, value, size);
+	error = getxattr(mnt_idmap(path.mnt), path.dentry, path.restrict_mask,
+			 name, value, size);
 	path_put(&path);
 	if (retry_estale(error, lookup_flags)) {
 		lookup_flags |= LOOKUP_REVAL;
@@ -814,7 +828,9 @@ SYSCALL_DEFINE4(fgetxattr, int, fd, const char __user *, name,
 	if (!f.file)
 		return error;
 	audit_file(f.file);
-	error = getxattr(file_mnt_idmap(f.file), f.file->f_path.dentry,
+	error = getxattr(file_mnt_idmap(f.file),
+			 f.file->f_path.dentry,
+			 f.file->f_path.restrict_mask,
 			 name, value, size);
 	fdput(f);
 	return error;
@@ -899,7 +915,8 @@ SYSCALL_DEFINE3(flistxattr, int, fd, char __user *, list, size_t, size)
  * Extended attribute REMOVE operations
  */
 static long
-removexattr(struct mnt_idmap *idmap, struct dentry *d,
+removexattr(struct mnt_idmap *idmap,
+	    struct dentry *d, path_restrict_t restrict_mask,
 	    const char __user *name)
 {
 	int error;
@@ -914,7 +931,7 @@ removexattr(struct mnt_idmap *idmap, struct dentry *d,
 	if (is_posix_acl_xattr(kname))
 		return vfs_remove_acl(idmap, d, kname);
 
-	return vfs_removexattr(idmap, d, kname);
+	return vfs_removexattr(idmap, d, restrict_mask, kname);
 }
 
 static int path_removexattr(const char __user *pathname,
@@ -928,7 +945,8 @@ retry:
 		return error;
 	error = mnt_want_write(path.mnt);
 	if (!error) {
-		error = removexattr(mnt_idmap(path.mnt), path.dentry, name);
+		error = removexattr(mnt_idmap(path.mnt), path.dentry,
+				    path.restrict_mask, name);
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -962,7 +980,9 @@ SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 	error = mnt_want_write_file(f.file);
 	if (!error) {
 		error = removexattr(file_mnt_idmap(f.file),
-				    f.file->f_path.dentry, name);
+				    f.file->f_path.dentry,
+				    f.file->f_path.restrict_mask,
+				    name);
 		mnt_drop_write_file(f.file);
 	}
 	fdput(f);

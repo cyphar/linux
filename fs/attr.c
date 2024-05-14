@@ -322,7 +322,7 @@ void setattr_copy(struct mnt_idmap *idmap, struct inode *inode,
 EXPORT_SYMBOL(setattr_copy);
 
 int may_setattr(struct mnt_idmap *idmap, struct inode *inode,
-		unsigned int ia_valid)
+		path_restrict_t restrict_mask, unsigned int ia_valid)
 {
 	int error;
 
@@ -340,7 +340,8 @@ int may_setattr(struct mnt_idmap *idmap, struct inode *inode,
 			return -EPERM;
 
 		if (!inode_owner_or_capable(idmap, inode)) {
-			error = inode_permission(idmap, inode, MAY_WRITE);
+			error = inode_permission(idmap, inode, restrict_mask,
+						 MAY_WRITE);
 			if (error)
 				return error;
 		}
@@ -377,6 +378,7 @@ EXPORT_SYMBOL(may_setattr);
  * performed on the raw inode simply pass @nop_mnt_idmap.
  */
 int notify_change(struct mnt_idmap *idmap, struct dentry *dentry,
+		  path_restrict_t restrict_mask,
 		  struct iattr *attr, struct inode **delegated_inode)
 {
 	struct inode *inode = dentry->d_inode;
@@ -387,7 +389,7 @@ int notify_change(struct mnt_idmap *idmap, struct dentry *dentry,
 
 	WARN_ON_ONCE(!inode_is_locked(inode));
 
-	error = may_setattr(idmap, inode, ia_valid);
+	error = may_setattr(idmap, inode, restrict_mask, ia_valid);
 	if (error)
 		return error;
 

@@ -270,7 +270,7 @@ struct iattr {
  */
 #define FILESYSTEM_MAX_STACK_DEPTH 2
 
-/** 
+/**
  * enum positive_aop_returns - aop return codes with specific semantics
  *
  * @AOP_WRITEPAGE_ACTIVATE: Informs the caller that page writeback has
@@ -280,7 +280,7 @@ struct iattr {
  * 			    be a candidate for writeback again in the near
  * 			    future.  Other callers must be careful to unlock
  * 			    the page if they get this return.  Returned by
- * 			    writepage(); 
+ * 			    writepage();
  *
  * @AOP_TRUNCATED_PAGE: The AOP method that was handed a locked page has
  *  			unlocked it and the page might have been truncated.
@@ -1048,8 +1048,8 @@ struct file *get_file_active(struct file **f);
 
 #define	MAX_NON_LFS	((1UL<<31) - 1)
 
-/* Page cache limit. The filesystems should put that into their s_maxbytes 
-   limits, otherwise bad things can happen in VM. */ 
+/* Page cache limit. The filesystems should put that into their s_maxbytes
+   limits, otherwise bad things can happen in VM. */
 #if BITS_PER_LONG==32
 #define MAX_LFS_FILESIZE	((loff_t)ULONG_MAX << PAGE_SHIFT)
 #elif BITS_PER_LONG==64
@@ -1855,19 +1855,72 @@ bool inode_owner_or_capable(struct mnt_idmap *idmap,
 /*
  * VFS helper functions..
  */
-int vfs_create(struct mnt_idmap *, struct inode *,
+int vfs_create(struct mnt_idmap *, struct inode *, path_restrict_t,
 	       struct dentry *, umode_t, bool);
-int vfs_mkdir(struct mnt_idmap *, struct inode *,
+static inline int vfs_path_create(const struct path *dir,
+				  struct dentry *dentry, umode_t mode,
+				  bool want_excl)
+{
+	return vfs_create(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			  dir->restrict_mask, dentry, mode, want_excl);
+}
+
+int vfs_mkdir(struct mnt_idmap *, struct inode *, path_restrict_t,
 	      struct dentry *, umode_t);
-int vfs_mknod(struct mnt_idmap *, struct inode *, struct dentry *,
-              umode_t, dev_t);
-int vfs_symlink(struct mnt_idmap *, struct inode *,
+static inline int vfs_path_mkdir(const struct path *dir, struct dentry *dentry,
+				 umode_t mode)
+{
+	return vfs_mkdir(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			 dir->restrict_mask, dentry, mode);
+}
+
+int vfs_mknod(struct mnt_idmap *, struct inode *, path_restrict_t,
+	      struct dentry *, umode_t, dev_t);
+static inline int vfs_path_mknod(const struct path *dir, struct dentry *dentry,
+				 umode_t mode, dev_t dev)
+{
+	return vfs_mknod(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			 dir->restrict_mask, dentry, mode, dev);
+}
+
+int vfs_symlink(struct mnt_idmap *, struct inode *, path_restrict_t,
 		struct dentry *, const char *);
-int vfs_link(struct dentry *, struct mnt_idmap *, struct inode *,
+static inline int vfs_path_symlink(const struct path *dir,
+				   struct dentry *dentry, const char *oldname)
+{
+	return vfs_symlink(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			   dir->restrict_mask, dentry, oldname);
+}
+
+int vfs_link(struct dentry *,
+	     struct mnt_idmap *, struct inode *, path_restrict_t,
 	     struct dentry *, struct inode **);
-int vfs_rmdir(struct mnt_idmap *, struct inode *, struct dentry *);
-int vfs_unlink(struct mnt_idmap *, struct inode *, struct dentry *,
-	       struct inode **);
+static inline int vfs_path_link(struct dentry *old_dentry,
+				const struct path *dir,
+				struct dentry *new_dentry,
+				struct inode **delegated_inode)
+{
+	return vfs_link(old_dentry, mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			dir->restrict_mask, new_dentry, delegated_inode);
+}
+
+int vfs_rmdir(struct mnt_idmap *, struct inode *, path_restrict_t,
+	      struct dentry *);
+static inline int vfs_path_rmdir(const struct path *dir, struct dentry *dentry)
+{
+	return vfs_rmdir(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			 dir->restrict_mask, dentry);
+}
+
+int vfs_unlink(struct mnt_idmap *, struct inode *, path_restrict_t,
+	       struct dentry *, struct inode **);
+static inline int vfs_path_unlink(const struct path *dir,
+				  struct dentry *dentry,
+				  struct inode **delegated_inode)
+{
+	return vfs_unlink(mnt_idmap(dir->mnt), d_inode(dir->dentry),
+			  dir->restrict_mask, dentry, delegated_inode);
+}
 
 /**
  * struct renamedata - contains all information required for renaming
@@ -1883,9 +1936,11 @@ int vfs_unlink(struct mnt_idmap *, struct inode *, struct dentry *,
 struct renamedata {
 	struct mnt_idmap *old_mnt_idmap;
 	struct inode *old_dir;
+	path_restrict_t old_dir_restrict_mask;
 	struct dentry *old_dentry;
 	struct mnt_idmap *new_mnt_idmap;
 	struct inode *new_dir;
+	path_restrict_t new_dir_restrict_mask;
 	struct dentry *new_dentry;
 	struct inode **delegated_inode;
 	unsigned int flags;
@@ -1894,22 +1949,24 @@ struct renamedata {
 int vfs_rename(struct renamedata *);
 
 static inline int vfs_whiteout(struct mnt_idmap *idmap,
-			       struct inode *dir, struct dentry *dentry)
+			       struct inode *dir,
+			       path_restrict_t dir_restrict_mask,
+			       struct dentry *dentry)
 {
-	return vfs_mknod(idmap, dir, dentry, S_IFCHR | WHITEOUT_MODE,
-			 WHITEOUT_DEV);
+	return vfs_mknod(idmap, dir, dir_restrict_mask,
+			 dentry, S_IFCHR | WHITEOUT_MODE, WHITEOUT_DEV);
 }
 
 struct file *kernel_tmpfile_open(struct mnt_idmap *idmap,
 				 const struct path *parentpath,
+				 path_restrict_t restrict_mask,
 				 umode_t mode, int open_flag,
 				 const struct cred *cred);
 struct file *kernel_file_open(const struct path *path, int flags,
 			      struct inode *inode, const struct cred *cred);
 
-int vfs_mkobj(struct dentry *, umode_t,
-		int (*f)(struct dentry *, umode_t, void *),
-		void *);
+int vfs_mkobj(struct dentry *, path_restrict_t, umode_t,
+	      int (*f)(struct dentry *, umode_t, void *), void *);
 
 int vfs_fchown(struct file *file, uid_t user, gid_t group);
 int vfs_fchmod(struct file *file, umode_t mode);
@@ -2483,7 +2540,7 @@ int sync_inode_metadata(struct inode *inode, int wait);
 struct file_system_type {
 	const char *name;
 	int fs_flags;
-#define FS_REQUIRES_DEV		1 
+#define FS_REQUIRES_DEV		1
 #define FS_BINARY_MOUNTDATA	2
 #define FS_HAS_SUBTYPE		4
 #define FS_USERNS_MOUNT		8	/* Can be mounted by userns root */
@@ -2650,7 +2707,7 @@ static inline bool is_idmapped_mnt(const struct vfsmount *mnt)
 }
 
 extern long vfs_truncate(const struct path *, loff_t);
-int do_truncate(struct mnt_idmap *, struct dentry *, loff_t start,
+int do_truncate(struct mnt_idmap *, const struct path *, loff_t start,
 		unsigned int time_attrs, struct file *filp);
 extern int vfs_fallocate(struct file *file, int mode, loff_t offset,
 			loff_t len);
@@ -2668,8 +2725,8 @@ static inline struct file *file_open_root_mnt(struct vfsmount *mnt,
 }
 struct file *dentry_open(const struct path *path, int flags,
 			 const struct cred *creds);
-struct file *dentry_create(const struct path *path, int flags, umode_t mode,
-			   const struct cred *cred);
+struct file *dentry_create(const struct path *dir, struct dentry *dentry,
+			   int flags, umode_t mode, const struct cred *cred);
 struct path *backing_file_user_path(struct file *f);
 
 /*
@@ -2831,18 +2888,22 @@ static inline int bmap(struct inode *inode,  sector_t *block)
 #endif
 
 int notify_change(struct mnt_idmap *, struct dentry *,
+		  path_restrict_t restrict_mask,
 		  struct iattr *, struct inode **);
-int inode_permission(struct mnt_idmap *, struct inode *, int);
+int inode_permission(struct mnt_idmap *, struct inode *,
+		     path_restrict_t restrict_mask, int);
 int generic_permission(struct mnt_idmap *, struct inode *, int);
 static inline int file_permission(struct file *file, int mask)
 {
 	return inode_permission(file_mnt_idmap(file),
-				file_inode(file), mask);
+				file_inode(file),
+				file->f_path.restrict_mask, mask);
 }
 static inline int path_permission(const struct path *path, int mask)
 {
 	return inode_permission(mnt_idmap(path->mnt),
-				d_inode(path->dentry), mask);
+				d_inode(path->dentry),
+				path->restrict_mask, mask);
 }
 int __check_sticky(struct mnt_idmap *idmap, struct inode *dir,
 		   struct inode *inode);
@@ -2997,7 +3058,7 @@ ssize_t __kernel_read(struct file *file, void *buf, size_t count, loff_t *pos);
 extern ssize_t kernel_write(struct file *, const void *, size_t, loff_t *);
 extern ssize_t __kernel_write(struct file *, const void *, size_t, loff_t *);
 extern struct file * open_exec(const char *);
- 
+
 /* fs/dcache.c -- generic fs support functions */
 extern bool is_subdir(struct dentry *, struct dentry *);
 extern bool path_is_under(const struct path *, const struct path *);
@@ -3383,7 +3444,7 @@ static inline bool sb_has_encoding(const struct super_block *sb)
 }
 
 int may_setattr(struct mnt_idmap *idmap, struct inode *inode,
-		unsigned int ia_valid);
+		path_restrict_t restrict_mask, unsigned int ia_valid);
 int setattr_prepare(struct mnt_idmap *, struct dentry *, struct iattr *);
 extern int inode_newsize_ok(const struct inode *, loff_t offset);
 void setattr_copy(struct mnt_idmap *, struct inode *inode,

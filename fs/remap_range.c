@@ -424,7 +424,7 @@ static bool may_dedupe_file(struct file *file)
 		return true;
 	if (vfsuid_eq_kuid(i_uid_into_vfsuid(idmap, inode), current_fsuid()))
 		return true;
-	if (!inode_permission(idmap, inode, MAY_WRITE))
+	if (!file_permission(file, MAY_WRITE))
 		return true;
 	return false;
 }

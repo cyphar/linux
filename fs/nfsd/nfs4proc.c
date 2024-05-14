@@ -191,11 +191,11 @@ static inline bool nfsd4_create_is_exclusive(int createmode)
 }
 
 static __be32
-nfsd4_vfs_create(struct svc_fh *fhp, struct dentry *child,
-		 struct nfsd4_open *open)
+nfsd4_vfs_create(struct svc_fh *fhp, struct dentry *parent,
+		 struct dentry *child, struct nfsd4_open *open)
 {
 	struct file *filp;
-	struct path path;
+	struct path dir;
 	int oflags;
 
 	oflags = O_CREAT | O_LARGEFILE;
@@ -210,9 +210,11 @@ nfsd4_vfs_create(struct svc_fh *fhp, struct dentry *child,
 		oflags |= O_RDONLY;
 	}
 
-	path.mnt = fhp->fh_export->ex_path.mnt;
-	path.dentry = child;
-	filp = dentry_create(&path, oflags, open->op_iattr.ia_mode,
+	dir.mnt = fhp->fh_export->ex_path.mnt;
+	dir.dentry = parent;
+	dir.restrict_mask = PATH_RESTRICT_NONE;
+
+	filp = dentry_create(&dir, child, oflags, open->op_iattr.ia_mode,
 			     current_cred());
 	if (IS_ERR(filp))
 		return nfserrno(PTR_ERR(filp));
@@ -348,7 +350,7 @@ nfsd4_create_file(struct svc_rqst *rqstp, struct svc_fh *fhp,
 	status = fh_fill_pre_attrs(fhp);
 	if (status != nfs_ok)
 		goto out;
-	status = nfsd4_vfs_create(fhp, child, open);
+	status = nfsd4_vfs_create(fhp, parent, child, open);
 	if (status != nfs_ok)
 		goto out;
 	open->op_created = true;

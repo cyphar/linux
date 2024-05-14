@@ -2021,7 +2021,8 @@ int dentry_needs_remove_privs(struct mnt_idmap *idmap,
 }
 
 static int __remove_privs(struct mnt_idmap *idmap,
-			  struct dentry *dentry, int kill)
+			  struct dentry *dentry, path_restrict_t restrict_mask,
+			  int kill)
 {
 	struct iattr newattrs;
 
@@ -2030,11 +2031,12 @@ static int __remove_privs(struct mnt_idmap *idmap,
 	 * Note we call this on write, so notify_change will not
 	 * encounter any conflicting delegations:
 	 */
-	return notify_change(idmap, dentry, &newattrs, NULL);
+	return notify_change(idmap, dentry, restrict_mask, &newattrs, NULL);
 }
 
 int file_remove_privs_flags(struct file *file, unsigned int flags)
 {
+	struct mnt_idmap *idmap = file_mnt_idmap(file);
 	struct dentry *dentry = file_dentry(file);
 	struct inode *inode = file_inode(file);
 	int error = 0;
@@ -2043,7 +2045,7 @@ int file_remove_privs_flags(struct file *file, unsigned int flags)
 	if (IS_NOSEC(inode) || !S_ISREG(inode->i_mode))
 		return 0;
 
-	kill = dentry_needs_remove_privs(file_mnt_idmap(file), dentry);
+	kill = dentry_needs_remove_privs(idmap, dentry);
 	if (kill < 0)
 		return kill;
 
@@ -2051,7 +2053,8 @@ int file_remove_privs_flags(struct file *file, unsigned int flags)
 		if (flags & IOCB_NOWAIT)
 			return -EAGAIN;
 
-		error = __remove_privs(file_mnt_idmap(file), dentry, kill);
+		error = __remove_privs(idmap, dentry,
+				       file->f_path.restrict_mask, kill);
 	}
 
 	if (!error)

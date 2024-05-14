@@ -932,9 +932,10 @@ free_pending:
  */
 
 static int btrfs_may_delete(struct mnt_idmap *idmap,
-			    struct inode *dir, struct dentry *victim, int isdir)
+			    struct path *parent, struct dentry *victim, int isdir)
 {
 	int error;
+	struct inode *dir = d_inode(parent->dentry);
 
 	if (d_really_is_negative(victim))
 		return -ENOENT;
@@ -944,7 +945,8 @@ static int btrfs_may_delete(struct mnt_idmap *idmap,
 		return -EINVAL;
 	audit_inode_child(dir, victim, AUDIT_TYPE_CHILD_DELETE);
 
-	error = inode_permission(idmap, dir, MAY_WRITE | MAY_EXEC);
+	error = inode_permission(idmap, dir, parent->restrict_mask,
+				 MAY_WRITE | MAY_EXEC);
 	if (error)
 		return error;
 	if (IS_APPEND(dir))
@@ -969,15 +971,18 @@ static int btrfs_may_delete(struct mnt_idmap *idmap,
 
 /* copy of may_create in fs/namei.c() */
 static inline int btrfs_may_create(struct mnt_idmap *idmap,
-				   struct inode *dir, struct dentry *child)
+				   struct path *parent, struct dentry *child)
 {
+	struct *inode dir = d_inode(parent->dentry);
+
 	if (d_really_is_positive(child))
 		return -EEXIST;
 	if (IS_DEADDIR(dir))
 		return -ENOENT;
 	if (!fsuidgid_has_mapping(dir->i_sb, idmap))
 		return -EOVERFLOW;
-	return inode_permission(idmap, dir, MAY_WRITE | MAY_EXEC);
+	return inode_permission(idmap, dir, parent->restrict_mask,
+				MAY_WRITE | MAY_EXEC);
 }
 
 /*
@@ -1007,7 +1012,7 @@ static noinline int btrfs_mksubvol(const struct path *parent,
 	if (IS_ERR(dentry))
 		goto out_unlock;
 
-	error = btrfs_may_create(idmap, dir, dentry);
+	error = btrfs_may_create(idmap, dir, parent->restrict_mask, dentry);
 	if (error)
 		goto out_dput;
 
@@ -2012,6 +2017,7 @@ static int btrfs_search_path_in_tree_user(struct mnt_idmap *idmap,
 				goto out_put;
 			}
 			ret = inode_permission(idmap, temp_inode,
+					       PATH_RESTRICT_NONE,
 					       MAY_READ | MAY_EXEC);
 			iput(temp_inode);
 			if (ret) {
@@ -2566,13 +2572,16 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		if (root == dest)
 			goto out_dput;
 
-		err = inode_permission(idmap, inode, MAY_WRITE | MAY_EXEC);
+		/* TODO: Add restrict_mask here. */
+		err = inode_permission(idmap, inode,
+				       PATH_RESTRICT_NONE,
+				       MAY_WRITE | MAY_EXEC);
 		if (err)
 			goto out_dput;
 	}
 
 	/* check if subvolume may be deleted by a user */
-	err = btrfs_may_delete(idmap, dir, dentry, 1);
+	err = btrfs_may_delete(idmap, &file->f_path, dentry, 1);
 	if (err)
 		goto out_dput;
 
@@ -2635,7 +2644,8 @@ static int btrfs_ioctl_defrag(struct file *file, void __user *argp)
 		 * running and allows defrag on files open in read-only mode.
 		 */
 		if (!capable(CAP_SYS_ADMIN) &&
-		    inode_permission(&nop_mnt_idmap, inode, MAY_WRITE)) {
+		    inode_permission(&nop_mnt_idmap, inode,
+				     file->f_path.restrict_mask, MAY_WRITE)) {
 			ret = -EPERM;
 			goto out;
 		}

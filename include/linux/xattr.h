@@ -72,27 +72,30 @@ struct xattr {
 };
 
 ssize_t __vfs_getxattr(struct dentry *, struct inode *, const char *, void *, size_t);
-ssize_t vfs_getxattr(struct mnt_idmap *, struct dentry *, const char *,
-		     void *, size_t);
+ssize_t vfs_getxattr(struct mnt_idmap *, struct dentry *, path_restrict_t,
+		     const char *, void *, size_t);
 ssize_t vfs_listxattr(struct dentry *d, char *list, size_t size);
-int __vfs_setxattr(struct mnt_idmap *, struct dentry *, struct inode *,
-		   const char *, const void *, size_t, int);
+int __vfs_setxattr(struct mnt_idmap *, struct dentry *,
+		   struct inode *, const char *, const void *, size_t, int);
 int __vfs_setxattr_noperm(struct mnt_idmap *, struct dentry *,
 			  const char *, const void *, size_t, int);
-int __vfs_setxattr_locked(struct mnt_idmap *, struct dentry *,
+int __vfs_setxattr_locked(struct mnt_idmap *, struct dentry *, path_restrict_t,
 			  const char *, const void *, size_t, int,
 			  struct inode **);
-int vfs_setxattr(struct mnt_idmap *, struct dentry *, const char *,
-		 const void *, size_t, int);
-int __vfs_removexattr(struct mnt_idmap *, struct dentry *, const char *);
+int vfs_setxattr(struct mnt_idmap *, struct dentry *, path_restrict_t,
+		 const char *, const void *, size_t, int);
+int __vfs_removexattr(struct mnt_idmap *, struct dentry *,
+		      const char *);
 int __vfs_removexattr_locked(struct mnt_idmap *, struct dentry *,
-			     const char *, struct inode **);
-int vfs_removexattr(struct mnt_idmap *, struct dentry *, const char *);
+			     path_restrict_t, const char *, struct inode **);
+int vfs_removexattr(struct mnt_idmap *, struct dentry *, path_restrict_t,
+		    const char *);
 
 ssize_t generic_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size);
 int vfs_getxattr_alloc(struct mnt_idmap *idmap,
-		       struct dentry *dentry, const char *name,
-		       char **xattr_value, size_t size, gfp_t flags);
+		       struct dentry *dentry, path_restrict_t restrict_mask,
+		       const char *name, char **xattr_value, size_t size,
+		       gfp_t flags);
 
 int xattr_supports_user_prefix(struct inode *inode);
 

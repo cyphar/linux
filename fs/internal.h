@@ -276,11 +276,12 @@ struct xattr_ctx {
 
 ssize_t do_getxattr(struct mnt_idmap *idmap,
 		    struct dentry *d,
+		    path_restrict_t restrict_mask,
 		    struct xattr_ctx *ctx);
 
 int setxattr_copy(const char __user *name, struct xattr_ctx *ctx);
 int do_setxattr(struct mnt_idmap *idmap, struct dentry *dentry,
-		struct xattr_ctx *ctx);
+		path_restrict_t restrict_mask, struct xattr_ctx *ctx);
 int may_write_xattr(struct mnt_idmap *idmap, struct inode *inode);
 
 #ifdef CONFIG_FS_POSIX_ACL

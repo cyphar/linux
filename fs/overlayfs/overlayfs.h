@@ -355,13 +355,15 @@ static inline int ovl_do_rename(struct ovl_fs *ofs, struct inode *olddir,
 {
 	int err;
 	struct renamedata rd = {
-		.old_mnt_idmap	= ovl_upper_mnt_idmap(ofs),
-		.old_dir 	= olddir,
-		.old_dentry 	= olddentry,
-		.new_mnt_idmap	= ovl_upper_mnt_idmap(ofs),
-		.new_dir 	= newdir,
-		.new_dentry 	= newdentry,
-		.flags 		= flags,
+		.old_mnt_idmap		= ovl_upper_mnt_idmap(ofs),
+		.old_dir		= olddir,
+		.old_dir_restrict_mask	= PATH_RESTRICT_NONE,
+		.old_dentry		= olddentry,
+		.new_mnt_idmap		= ovl_upper_mnt_idmap(ofs),
+		.new_dir		= newdir,
+		.new_dir_restrict_mask	= PATH_RESTRICT_NONE,
+		.new_dentry		= newdentry,
+		.flags			= flags,
 	};
 
 	pr_debug("rename(%pd2, %pd2, 0x%x)\n", olddentry, newdentry, flags);
@@ -384,7 +386,11 @@ static inline int ovl_do_whiteout(struct ovl_fs *ofs,
 static inline struct file *ovl_do_tmpfile(struct ovl_fs *ofs,
 					  struct dentry *dentry, umode_t mode)
 {
-	struct path path = { .mnt = ovl_upper_mnt(ofs), .dentry = dentry };
+	struct path path = {
+		.mnt		= ovl_upper_mnt(ofs),
+		.dentry		= dentry,
+		.restrict_mask	= PATH_RESTRICT_NONE,
+	};
 	struct file *file = kernel_tmpfile_open(ovl_upper_mnt_idmap(ofs), &path,
 						mode, O_LARGEFILE | O_WRONLY,
 						current_cred());
