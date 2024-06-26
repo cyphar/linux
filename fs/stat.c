@@ -23,6 +23,9 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+#include <crypto/blake2s.h>
+#include <linux/exportfs.h>
+
 #include "internal.h"
 #include "mount.h"
 
@@ -243,7 +246,7 @@ static int vfs_statx(int dfd, struct filename *filename, int flags,
 retry:
 	error = filename_lookup(dfd, filename, lookup_flags, &path, NULL);
 	if (error)
-		goto out;
+		return error;
 
 	error = vfs_getattr(&path, stat, request_mask, flags);
 
@@ -253,6 +256,52 @@ retry:
 	} else {
 		stat->mnt_id = real_mount(path.mnt)->mnt_id;
 		stat->result_mask |= STATX_MNT_ID;
+	}
+
+	if (request_mask & STATX_FHANDLE_HASH) {
+		/* Based on do_sys_name_to_handle(), but EXPORT_FH_FID. */
+		long retval;
+		int handle_dwords, handle_size;
+		struct file_handle *handle = NULL;
+		struct inode *inode = d_inode(path.dentry);
+
+		if (!exportfs_can_encode_fid(inode->i_sb->s_export_op))
+			return -EOPNOTSUPP;
+
+		handle_size = struct_size(handle, f_handle, MAX_HANDLE_SZ);
+		handle = kzalloc(handle_size, GFP_KERNEL);
+		if (!handle)
+			return -ENOMEM;
+
+		handle_dwords = MAX_HANDLE_SZ >> 2;
+		retval = exportfs_encode_fid(inode,
+					     (struct fid *) handle->f_handle,
+					     &handle_dwords);
+		if (retval == FILEID_INVALID || retval == -ENOSPC)
+			retval = -EOVERFLOW;
+		if (retval < 0) {
+			kfree(handle);
+			return retval;
+		}
+		handle->handle_type = retval;
+		handle->handle_bytes = handle_dwords * sizeof(u32);
+
+		/*
+		 * Hash the whole structure, excluding trailing zero bytes that
+		 * weren't filled by exportfs_encode_fid. The decision as to
+		 * whether exclude trailing bytes is somewhat arbtirary
+		 * (blake2s is not vulnerable to length-extension attacks, and
+		 * there is no risk of trailing zero bytes causing confusion
+		 * between handles because the handle size is stored in the
+		 * structure we are hashing) so just go with what userspace
+		 * would probably do.
+		 */
+		handle_size = struct_size(handle, f_handle,
+					  handle->handle_bytes);
+		blake2s(stat->fhandle_hash, (u8 *) handle, NULL,
+			sizeof(stat->fhandle_hash), handle_size, 0);
+
+		kfree(handle);
 	}
 
 	if (path.mnt->mnt_root == path.dentry)
@@ -272,7 +321,7 @@ retry:
 		lookup_flags |= LOOKUP_REVAL;
 		goto retry;
 	}
-out:
+
 	return error;
 }
 
@@ -659,6 +708,9 @@ cp_statx(const struct kstat *stat, struct statx __user *buffer)
 	tmp.stx_dio_mem_align = stat->dio_mem_align;
 	tmp.stx_dio_offset_align = stat->dio_offset_align;
 	tmp.stx_subvol = stat->subvol;
+
+	BUILD_BUG_ON(sizeof(tmp.stx_fhandle_hash) != sizeof(stat->fhandle_hash));
+	memcpy(tmp.stx_fhandle_hash, stat->fhandle_hash, sizeof(tmp.stx_fhandle_hash));
 
 	return copy_to_user(buffer, &tmp, sizeof(tmp)) ? -EFAULT : 0;
 }

@@ -128,7 +128,9 @@ struct statx {
 	__u32	stx_dio_offset_align;	/* File offset alignment for direct I/O */
 	__u64	stx_subvol;	/* Subvolume identifier */
 	/* 0xa0 */
-	__u64	__spare3[11];	/* Spare space for future expansion */
+	__u8	stx_fhandle_hash[24];	/* 192-bit hash of name_to_handle_at(AT_HANDLE_FID) file handle. */
+	/* 0xb8 */
+	__u64	__spare3[8];	/* Spare space for future expansion */
 	/* 0x100 */
 };
 
@@ -157,6 +159,7 @@ struct statx {
 #define STATX_DIOALIGN		0x00002000U	/* Want/got direct I/O alignment info */
 #define STATX_MNT_ID_UNIQUE	0x00004000U	/* Want/got extended stx_mount_id */
 #define STATX_SUBVOL		0x00008000U	/* Want/got stx_subvol */
+#define STATX_FHANDLE_HASH	0x00010000U	/* Want/got stx_fhandle_hash */
 
 #define STATX__RESERVED		0x80000000U	/* Reserved for future struct statx expansion */
 

@@ -19,6 +19,8 @@
 #include <linux/time.h>
 #include <linux/uidgid.h>
 
+#include <crypto/blake2s.h>
+
 struct kstat {
 	u32		result_mask;	/* What fields the user got */
 	umode_t		mode;
@@ -54,6 +56,8 @@ struct kstat {
 	u32		dio_offset_align;
 	u64		change_cookie;
 	u64		subvol;
+#define KSTAT_FHANDLE_HASH_LEN BLAKE2S_192_HASH_SIZE
+	u8		fhandle_hash[KSTAT_FHANDLE_HASH_LEN];
 };
 
 /* These definitions are internal to the kernel for now. Mainly used by nfsd. */
