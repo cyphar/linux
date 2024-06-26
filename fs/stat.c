@@ -23,6 +23,9 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+#include <crypto/blake2s.h>
+#include <linux/exportfs.h>
+
 #include "internal.h"
 #include "mount.h"
 
@@ -248,6 +251,7 @@ int getname_statx_lookup_flags(int flags)
 static int vfs_statx_path(struct path *path, int flags, struct kstat *stat,
 			  u32 request_mask)
 {
+	struct inode *inode = d_inode(path->dentry);
 	int error = vfs_getattr(path, stat, request_mask, flags);
 
 	if (request_mask & STATX_MNT_ID_UNIQUE) {
@@ -269,6 +273,46 @@ static int vfs_statx_path(struct path *path, int flags, struct kstat *stat,
 	 */
 	if (S_ISBLK(stat->mode))
 		bdev_statx(path, stat, request_mask);
+
+	if (exportfs_can_encode_fid(inode->i_sb->s_export_op)) {
+		/* Based on do_sys_name_to_handle(), but EXPORT_FH_FID. */
+		long retval;
+		int handle_dwords, handle_size;
+		struct file_handle *handle = NULL;
+
+		handle_size = struct_size(handle, f_handle, MAX_HANDLE_SZ);
+		handle = kzalloc(handle_size, GFP_KERNEL);
+		if (!handle)
+			return -ENOMEM;
+
+		handle_dwords = MAX_HANDLE_SZ >> 2;
+		retval = exportfs_encode_fid(inode,
+					     (struct fid *) handle->f_handle,
+					     &handle_dwords);
+		if (retval < 0 || retval == FILEID_INVALID)
+			goto out_free_fhandle;
+		handle->handle_type = retval;
+		handle->handle_bytes = handle_dwords * sizeof(u32);
+
+		/*
+		 * Hash the whole structure, excluding trailing zero bytes that
+		 * weren't filled by exportfs_encode_fid. The decision as to
+		 * whether exclude trailing bytes is somewhat arbtirary
+		 * (blake2s is not vulnerable to length-extension attacks, and
+		 * there is no risk of trailing zero bytes causing confusion
+		 * between handles because the handle size is stored in the
+		 * structure we are hashing) so just go with what userspace
+		 * would probably do.
+		 */
+		handle_size = struct_size(handle, f_handle,
+					  handle->handle_bytes);
+		blake2s(stat->fhandle_hash, (u8 *) handle, NULL,
+			sizeof(stat->fhandle_hash), handle_size, 0);
+
+		stat->result_mask |= STATX_FHANDLE_HASH;
+out_free_fhandle:
+		kfree(handle);
+	}
 
 	return error;
 }
@@ -704,6 +748,9 @@ cp_statx(const struct kstat *stat, struct statx __user *buffer)
 	tmp.stx_atomic_write_unit_min = stat->atomic_write_unit_min;
 	tmp.stx_atomic_write_unit_max = stat->atomic_write_unit_max;
 	tmp.stx_atomic_write_segments_max = stat->atomic_write_segments_max;
+
+	BUILD_BUG_ON(sizeof(tmp.stx_fhandle_hash) != sizeof(stat->fhandle_hash));
+	memcpy(tmp.stx_fhandle_hash, stat->fhandle_hash, sizeof(tmp.stx_fhandle_hash));
 
 	return copy_to_user(buffer, &tmp, sizeof(tmp)) ? -EFAULT : 0;
 }
