@@ -2232,7 +2232,8 @@ static void cgroup_fs_context_free(struct fs_context *fc)
 
 	kfree(ctx->name);
 	kfree(ctx->release_agent);
-	put_cgroup_ns(ctx->ns);
+	if (ctx->ns)
+		put_cgroup_ns(ctx->ns);
 	kernfs_free_fs_context(fc);
 	kfree(ctx);
 }
@@ -2278,19 +2279,23 @@ static int cgroup_init_fs_context(struct fs_context *fc)
 	if (!ctx)
 		return -ENOMEM;
 
-	ctx->ns = current->nsproxy->cgroup_ns;
-	get_cgroup_ns(ctx->ns);
 	fc->fs_private = &ctx->kfc;
 	if (fc->fs_type == &cgroup2_fs_type)
 		fc->ops = &cgroup_fs_context_ops;
 	else
 		fc->ops = &cgroup1_fs_context_ops;
-	put_user_ns(fc->user_ns);
-	fc->user_ns = get_user_ns(ctx->ns->user_ns);
 	fc->global = true;
 
 	if (have_favordynmods)
 		ctx->flags |= CGRP_ROOT_FAVOR_DYNMODS;
+
+	if (fc->purpose != FS_CONTEXT_FOR_RECONFIGURE) {
+		/* Only save the cgroupns when configuring a new mount. */
+		ctx->ns = current->nsproxy->cgroup_ns;
+		get_cgroup_ns(ctx->ns);
+		put_user_ns(fc->user_ns);
+		fc->user_ns = get_user_ns(ctx->ns->user_ns);
+	}
 
 	return 0;
 }
