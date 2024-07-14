@@ -901,6 +901,7 @@ enum cgroup1_param {
 	Opt_xattr,
 	Opt_favordynmods,
 	Opt_nofavordynmods,
+	Opt_cgroupns,
 };
 
 const struct fs_parameter_spec cgroup1_fs_parameters[] = {
@@ -914,6 +915,7 @@ const struct fs_parameter_spec cgroup1_fs_parameters[] = {
 	fsparam_flag  ("xattr",		Opt_xattr),
 	fsparam_flag  ("favordynmods",	Opt_favordynmods),
 	fsparam_flag  ("nofavordynmods", Opt_nofavordynmods),
+	fsparam_fd    ("cgroupns",	Opt_cgroupns),
 	{}
 };
 
@@ -1008,6 +1010,8 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 		ctx->name = param->string;
 		param->string = NULL;
 		break;
+	case Opt_cgroupns:
+		return cgroup_parse_nsfd(fc, ctx, param, &result);
 	}
 	return 0;
 }
@@ -1080,6 +1084,12 @@ int cgroup1_reconfigure(struct fs_context *fc)
 	ret = check_cgroupfs_options(fc);
 	if (ret)
 		goto out_unlock;
+
+	if (ctx->ns != NULL) {
+		errorf(fc, "cannot reconfigure the cgroupns of an existing cgroup mount");
+		ret = -EBUSY;
+		goto out_unlock;
+	}
 
 	if (ctx->subsys_mask != root->subsys_mask || ctx->release_agent)
 		pr_warn("option changes via remount are deprecated (pid=%d comm=%s)\n",

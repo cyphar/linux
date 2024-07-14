@@ -235,6 +235,9 @@ void init_cgroup_root(struct cgroup_fs_context *ctx);
 int cgroup_setup_root(struct cgroup_root *root, u16 ss_mask);
 int rebind_subsystems(struct cgroup_root *dst_root, u16 ss_mask);
 int cgroup_do_get_tree(struct fs_context *fc);
+int cgroup_parse_nsfd(struct fs_context *fc, struct cgroup_fs_context *ctx,
+		      struct fs_parameter *param,
+		      struct fs_parse_result *result);
 
 int cgroup_migrate_vet_dst(struct cgroup *dst_cgrp);
 void cgroup_migrate_finish(struct cgroup_mgctx *mgctx);
@@ -276,6 +279,10 @@ void cgroup_base_stat_cputime_show(struct seq_file *seq);
  * namespace.c
  */
 extern const struct proc_ns_operations cgroupns_operations;
+static inline struct cgroup_namespace *to_cg_ns(struct ns_common *ns)
+{
+	return container_of(ns, struct cgroup_namespace, ns);
+}
 
 /*
  * cgroup-v1.c

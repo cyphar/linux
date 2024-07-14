@@ -1926,6 +1926,7 @@ enum cgroup2_param {
 	Opt_memory_recursiveprot,
 	Opt_memory_hugetlb_accounting,
 	Opt_pids_localevents,
+	Opt_cgroupns,
 	nr__cgroup2_params
 };
 
@@ -1936,8 +1937,63 @@ static const struct fs_parameter_spec cgroup2_fs_parameters[] = {
 	fsparam_flag("memory_recursiveprot",	Opt_memory_recursiveprot),
 	fsparam_flag("memory_hugetlb_accounting", Opt_memory_hugetlb_accounting),
 	fsparam_flag("pids_localevents",	Opt_pids_localevents),
+	fsparam_fd  ("cgroupns",		Opt_cgroupns),
 	{}
 };
+
+int cgroup_parse_nsfd(struct fs_context *fc, struct cgroup_fs_context *ctx,
+		      struct fs_parameter *param,
+		      struct fs_parse_result *result)
+{
+	struct ns_common *ns;
+	struct cgroup_namespace *cgroup_ns;
+	struct file *file;
+	int err = -EBADF;
+
+	if (param->type == fs_value_is_file) {
+		/* came through the new api */
+		file = param->file;
+		param->file = NULL;
+	} else {
+		file = fget(result->uint_32);
+	}
+	if (!file) {
+		errorf(fc, "could not open cgroupns file descriptor");
+		return -EBADF;
+	}
+
+	if (!proc_ns_file(file)) {
+		errorf(fc, "cgroupns file descriptor is not a namespace fd");
+		goto out_fput;
+	}
+
+	ns = get_proc_ns(file_inode(file));
+	if (ns->ops->type != CLONE_NEWCGROUP) {
+		errorf(fc, "cgroupns file descriptor is not a cgroup namespace fd");
+		goto out_fput;
+	}
+	cgroup_ns = to_cg_ns(ns);
+
+	/* If we can join the cgroupns, we can mount its root. */
+	if (!ns_capable(cgroup_ns->user_ns, CAP_SYS_ADMIN)) {
+		err = -EPERM;
+		errorf(fc, "cannot show root of provided cgroupns");
+		goto out_fput;
+	}
+
+	get_cgroup_ns(cgroup_ns);
+	put_cgroup_ns(ctx->ns);
+	ctx->ns = cgroup_ns;
+
+	put_user_ns(fc->user_ns);
+	fc->user_ns = get_user_ns(ctx->ns->user_ns);
+
+	err = 0;
+
+out_fput:
+	fput(file);
+	return err;
+}
 
 static int cgroup2_parse_param(struct fs_context *fc, struct fs_parameter *param)
 {
@@ -1968,6 +2024,8 @@ static int cgroup2_parse_param(struct fs_context *fc, struct fs_parameter *param
 	case Opt_pids_localevents:
 		ctx->flags |= CGRP_ROOT_PIDS_LOCAL_EVENTS;
 		return 0;
+	case Opt_cgroupns:
+		return cgroup_parse_nsfd(fc, ctx, param, &result);
 	}
 	return -EINVAL;
 }
@@ -2025,6 +2083,11 @@ static int cgroup_show_options(struct seq_file *seq, struct kernfs_root *kf_root
 static int cgroup_reconfigure(struct fs_context *fc)
 {
 	struct cgroup_fs_context *ctx = cgroup_fc2context(fc);
+
+	if (ctx->ns != NULL) {
+		errorf(fc, "cannot reconfigure the cgroupns of an existing cgroup mount");
+		return -EBUSY;
+	}
 
 	apply_cgroup_root_flags(ctx->flags);
 	return 0;
@@ -2269,7 +2332,7 @@ static const struct fs_context_operations cgroup1_fs_context_ops = {
 
 /*
  * Initialise the cgroup filesystem creation/reconfiguration context.  Notably,
- * we select the namespace we're going to use.
+ * we select the namespace we're going to use by default.
  */
 static int cgroup_init_fs_context(struct fs_context *fc)
 {
